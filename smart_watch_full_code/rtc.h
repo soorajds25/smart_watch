@@ -12,7 +12,7 @@ const char* ntpServer = "pool.ntp.org";
 const long gmtOffset_sec = 19800;  // 5.5 hours offset for IST
 const int daylightOffset_sec = 0;  // No Daylight Savings
 
-RTC_DS1307 rtc; 
+RTC_DS1307 rtc;
 
 char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
 
@@ -21,7 +21,7 @@ uint32_t lastSyncUnixTime = 0;  // Storing as unix time integer
 
 // 1. Data Structure
 struct RTC_Data {
-    uint32_t unixTime; 
+    uint32_t unixTime;
     int hour;
     int minute;
     int second;
@@ -43,38 +43,45 @@ inline bool init_RTC() {
 // 3. Read Function
 inline RTC_Data readRTC() {
   RTC_Data data;
-  DateTime now = rtc.now(); 
-    
-  data.unixTime = now.unixtime(); 
+
+  DateTime now = rtc.now();
+
+  data.unixTime = now.unixtime();
   data.hour = now.hour();
   data.minute = now.minute();
   data.second = now.second();
   data.day = now.day();
   data.month = now.month();
   data.year = now.year();
-    
   return data;
 }
 
+
 // 4. Sync Function (Call ONLY when WiFi is connected)
 inline void syncTimeRTC() {
-  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer); 
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
   if (!getLocalTime(&timeinfo)) {
     Serial.println("Failed to obtain time");
     return;
   }
   Serial.println("\nESP32 Time synchronized with NTP server.");
-  
+
   // Sync the RTC with the NTP time
   rtc.adjust(DateTime(timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
                       timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec));
 
   // Record the exact time we synced
   DateTime updatedTime = rtc.now();
-  lastSyncUnixTime = updatedTime.unixtime(); 
+  lastSyncUnixTime = updatedTime.unixtime();
 }
 
 #endif
+
+
+
+
+
+
 
 
 

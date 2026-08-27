@@ -4,7 +4,6 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include "MAX30105.h"
-
 #include "heartRate.h"
 
 MAX30105 particleSensor;
@@ -25,33 +24,27 @@ inline bool init_HEART() {
     Serial.println("MAX30105 was not found. Please check wiring/power.");
     return false; // Bails out safely
   }
-  
   // These lines only run if the sensor successfully started
   Serial.println("MAX30105 found. Place your index finger on the sensor.");
-
   particleSensor.setup(); // Configure sensor with default settings
   particleSensor.setPulseAmplitudeRed(0x0A); // Turn Red LED to low
   particleSensor.setPulseAmplitudeGreen(0);  // Turn off Green LED
-  
   return true;
 }
+
 inline int readHEART()
 {
   long irValue = particleSensor.getIR();
-
   if (checkForBeat(irValue) == true)
   {
     //We sensed a beat!
     long delta = millis() - lastBeat;
     lastBeat = millis();
-
     beatsPerMinute = 60 / (delta / 1000.0);
-
     if (beatsPerMinute < 255 && beatsPerMinute > 20)
     {
       rates[rateSpot++] = (byte)beatsPerMinute; //Store this reading in the array
       rateSpot %= RATE_SIZE; //Wrap variable
-
       //Take average of readings
       beatAvg = 0;
       for (byte x = 0 ; x < RATE_SIZE ; x++)
@@ -59,15 +52,29 @@ inline int readHEART()
       beatAvg /= RATE_SIZE;
     }
   }
-
   if (irValue < 50000){
     // Serial.print(" No finger?");
     return -1;
   }
   return beatAvg;
 }
+// --- Power Management Functions ---
+
+inline void stop_HEART() {
+  particleSensor.setPulseAmplitudeRed(0); // Force LED off immediately
+  particleSensor.shutDown();              // Put IC to sleep
+}
+
+inline void start_HEART() {
+  particleSensor.wakeUp();                   // Wake IC up
+  particleSensor.setPulseAmplitudeRed(0x0A); // Restore LED brightness
+}
+
 
 #endif
+
+
+
 
 
 //Original Example Code (TESTED and WORKING)

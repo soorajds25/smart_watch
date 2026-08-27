@@ -3,9 +3,7 @@
 
 #include <Arduino.h>
 #include <Wire.h>
-
-// ---> ADD THE LIBRARY HEADER RIGHT HERE <---
-#include <Adafruit_AHTX0.h> 
+#include <Adafruit_AHTX0.h>
 
 // 1. Data Structure
 struct AHT10_Data {
@@ -14,35 +12,36 @@ struct AHT10_Data {
 };
 
 // 2. Global instance of the sensor
-Adafruit_AHTX0 aht; 
+Adafruit_AHTX0 aht;
 
-// 3. Setup Function 
-
+// 3. Setup Function
 inline bool init_AHT10() {
   // The begin() function comes from the Adafruit library
   if (!aht.begin()) {
     Serial.println("Could not find AHT10? Check wiring");
     return false; // Bails out safely instead of freezing
   }
-  
   Serial.println("AHT10 found");
   return true;
 }
 
-// 4. Read Function 
+// 4. Read Function
 inline AHT10_Data readAHT10() {
     AHT10_Data data;
     sensors_event_t humidity, temp;
-    
+   
     aht.getEvent(&humidity, &temp); // Fetching data using the library
-    
+
     data.temperature = temp.temperature;
     data.humidity = humidity.relative_humidity;
-    
     return data;
 }
 
+
 #endif
+
+
+
 
 
 /*  Original Example Code (TESTED and WORKING)
