@@ -21,6 +21,15 @@ void ui_event_Screen7(lv_event_t * e)
     }
 }
 
+void ui_event_ButtonUpgradeFinal(lv_event_t * e)
+{
+    lv_event_code_t event_code = lv_event_get_code(e);
+
+    if(event_code == LV_EVENT_RELEASED) {
+        _ui_screen_change(&ui_Screen8, LV_SCR_LOAD_ANIM_NONE, 20, 0, &ui_Screen8_screen_init);
+    }
+}
+
 // build funtions
 
 void ui_Screen7_screen_init(void)
@@ -72,6 +81,7 @@ void ui_Screen7_screen_init(void)
     lv_obj_set_align(ui_UpgradeTextFinal, LV_ALIGN_CENTER);
     lv_label_set_text(ui_UpgradeTextFinal, "Upgrade");
 
+    lv_obj_add_event_cb(ui_ButtonUpgradeFinal, ui_event_ButtonUpgradeFinal, LV_EVENT_ALL, NULL);
     lv_obj_add_event_cb(ui_Screen7, ui_event_Screen7, LV_EVENT_ALL, NULL);
 
 }

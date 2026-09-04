@@ -17,6 +17,7 @@ extern void ui_event_Screen7(lv_event_t * e);
 extern lv_obj_t * ui_Screen7;
 extern lv_obj_t * ui_WarningText;
 extern lv_obj_t * ui_Warning_Heading;
+extern void ui_event_ButtonUpgradeFinal(lv_event_t * e);
 extern lv_obj_t * ui_ButtonUpgradeFinal;
 extern lv_obj_t * ui_UpgradeTextFinal;
 // CUSTOM VARIABLES

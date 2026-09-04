@@ -24,6 +24,7 @@ extern lv_obj_t * ui_ButtonUpgrade;
 extern lv_obj_t * ui_UpgradeText;
 extern lv_obj_t * ui_WIFI;
 extern lv_obj_t * ui_BLUETOOTH;
+extern lv_obj_t * ui_Slider1;
 // CUSTOM VARIABLES
 
 #ifdef __cplusplus

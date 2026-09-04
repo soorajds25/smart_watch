@@ -14,6 +14,7 @@ lv_obj_t * ui_ButtonUpgrade = NULL;
 lv_obj_t * ui_UpgradeText = NULL;
 lv_obj_t * ui_WIFI = NULL;
 lv_obj_t * ui_BLUETOOTH = NULL;
+lv_obj_t * ui_Slider1 = NULL;
 // event funtions
 void ui_event_Screen6(lv_event_t * e)
 {
@@ -52,22 +53,22 @@ void ui_Screen6_screen_init(void)
     ui_wifiSwitch = lv_switch_create(ui_Screen6);
     lv_obj_set_width(ui_wifiSwitch, 50);
     lv_obj_set_height(ui_wifiSwitch, 25);
-    lv_obj_set_x(ui_wifiSwitch, 33);
-    lv_obj_set_y(ui_wifiSwitch, -70);
+    lv_obj_set_x(ui_wifiSwitch, 34);
+    lv_obj_set_y(ui_wifiSwitch, -37);
     lv_obj_set_align(ui_wifiSwitch, LV_ALIGN_CENTER);
 
     ui_bleSwitch = lv_switch_create(ui_Screen6);
     lv_obj_set_width(ui_bleSwitch, 50);
     lv_obj_set_height(ui_bleSwitch, 25);
-    lv_obj_set_x(ui_bleSwitch, 33);
-    lv_obj_set_y(ui_bleSwitch, -20);
+    lv_obj_set_x(ui_bleSwitch, 34);
+    lv_obj_set_y(ui_bleSwitch, 0);
     lv_obj_set_align(ui_bleSwitch, LV_ALIGN_CENTER);
 
     ui_ButtonSyncNow = lv_btn_create(ui_Screen6);
     lv_obj_set_width(ui_ButtonSyncNow, 100);
     lv_obj_set_height(ui_ButtonSyncNow, 39);
     lv_obj_set_x(ui_ButtonSyncNow, 0);
-    lv_obj_set_y(ui_ButtonSyncNow, 30);
+    lv_obj_set_y(ui_ButtonSyncNow, 45);
     lv_obj_set_align(ui_ButtonSyncNow, LV_ALIGN_CENTER);
     lv_obj_add_flag(ui_ButtonSyncNow, LV_OBJ_FLAG_SCROLL_ON_FOCUS);     /// Flags
     lv_obj_clear_flag(ui_ButtonSyncNow, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
@@ -84,7 +85,7 @@ void ui_Screen6_screen_init(void)
     lv_obj_set_width(ui_ButtonUpgrade, 100);
     lv_obj_set_height(ui_ButtonUpgrade, 25);
     lv_obj_set_x(ui_ButtonUpgrade, 0);
-    lv_obj_set_y(ui_ButtonUpgrade, 80);
+    lv_obj_set_y(ui_ButtonUpgrade, 90);
     lv_obj_set_align(ui_ButtonUpgrade, LV_ALIGN_CENTER);
     lv_obj_add_flag(ui_ButtonUpgrade, LV_OBJ_FLAG_SCROLL_ON_FOCUS);     /// Flags
     lv_obj_clear_flag(ui_ButtonUpgrade, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
@@ -100,8 +101,8 @@ void ui_Screen6_screen_init(void)
     ui_WIFI = lv_label_create(ui_Screen6);
     lv_obj_set_width(ui_WIFI, LV_SIZE_CONTENT);   /// 1
     lv_obj_set_height(ui_WIFI, LV_SIZE_CONTENT);    /// 1
-    lv_obj_set_x(ui_WIFI, -35);
-    lv_obj_set_y(ui_WIFI, -70);
+    lv_obj_set_x(ui_WIFI, -38);
+    lv_obj_set_y(ui_WIFI, -37);
     lv_obj_set_align(ui_WIFI, LV_ALIGN_CENTER);
     lv_label_set_text(ui_WIFI, "WIFI");
     lv_obj_set_style_text_color(ui_WIFI, lv_color_hex(0xB0B0B0), LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -111,13 +112,32 @@ void ui_Screen6_screen_init(void)
     ui_BLUETOOTH = lv_label_create(ui_Screen6);
     lv_obj_set_width(ui_BLUETOOTH, LV_SIZE_CONTENT);   /// 1
     lv_obj_set_height(ui_BLUETOOTH, LV_SIZE_CONTENT);    /// 1
-    lv_obj_set_x(ui_BLUETOOTH, -35);
-    lv_obj_set_y(ui_BLUETOOTH, -20);
+    lv_obj_set_x(ui_BLUETOOTH, -36);
+    lv_obj_set_y(ui_BLUETOOTH, 0);
     lv_obj_set_align(ui_BLUETOOTH, LV_ALIGN_CENTER);
     lv_label_set_text(ui_BLUETOOTH, "BLE");
     lv_obj_set_style_text_color(ui_BLUETOOTH, lv_color_hex(0x4984FF), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_opa(ui_BLUETOOTH, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(ui_BLUETOOTH, &lv_font_montserrat_26, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    ui_Slider1 = lv_slider_create(ui_Screen6);
+    lv_slider_set_value(ui_Slider1, 0, LV_ANIM_OFF);
+    if(lv_slider_get_mode(ui_Slider1) == LV_SLIDER_MODE_RANGE) lv_slider_set_left_value(ui_Slider1, 0, LV_ANIM_OFF);
+    lv_obj_set_width(ui_Slider1, 150);
+    lv_obj_set_height(ui_Slider1, 10);
+    lv_obj_set_x(ui_Slider1, 0);
+    lv_obj_set_y(ui_Slider1, -73);
+    lv_obj_set_align(ui_Slider1, LV_ALIGN_CENTER);
+    lv_obj_clear_flag(ui_Slider1, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_ELASTIC | LV_OBJ_FLAG_SCROLL_MOMENTUM |
+                      LV_OBJ_FLAG_SCROLL_CHAIN);     /// Flags
+    lv_obj_set_style_bg_color(ui_Slider1, lv_color_hex(0xFFFFE6), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_opa(ui_Slider1, 30, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    lv_obj_set_style_bg_color(ui_Slider1, lv_color_hex(0xFFFEE1), LV_PART_INDICATOR | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_opa(ui_Slider1, 255, LV_PART_INDICATOR | LV_STATE_DEFAULT);
+
+    lv_obj_set_style_bg_color(ui_Slider1, lv_color_hex(0xFFFFE6), LV_PART_KNOB | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_opa(ui_Slider1, 255, LV_PART_KNOB | LV_STATE_DEFAULT);
 
     lv_obj_add_event_cb(ui_ButtonUpgrade, ui_event_ButtonUpgrade, LV_EVENT_ALL, NULL);
     lv_obj_add_event_cb(ui_Screen6, ui_event_Screen6, LV_EVENT_ALL, NULL);
@@ -138,5 +158,6 @@ void ui_Screen6_screen_destroy(void)
     ui_UpgradeText = NULL;
     ui_WIFI = NULL;
     ui_BLUETOOTH = NULL;
+    ui_Slider1 = NULL;
 
 }
