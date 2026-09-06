@@ -47,6 +47,8 @@
 extern const char* WIFI_SSID = "PHENIX-AX10";
 extern const char* WIFI_PASS = "03323359065";
 
+
+
 #define VERCEL_API_URL "https://patient-health-monitoring-pi.vercel.app/api/entry"
 #define VERCEL_API_KEY "your_auth_token_here"
 #define OTA_UPDATE_URL "https://your-custom-dashboard.vercel.app/api/firmware.bin"

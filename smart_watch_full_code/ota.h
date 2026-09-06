@@ -9,7 +9,7 @@
 
 // 1. Current Firmware Version 
 // -> BUMP THIS NUMBER UP BEFORE EXPORTING A NEW UPDATE!
-const char* currentFirmwareVersion = "1.0.4";
+const char* currentFirmwareVersion = "1.0.3";
 
 // 2. URL to check the latest version number
 const char* versionUrl = "https://raw.githubusercontent.com/soorajds25/smartwatch_firmware/refs/heads/main/version.txt";
