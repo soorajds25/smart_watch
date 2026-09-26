@@ -357,6 +357,13 @@ void update_battery() {
   }
   float raw_batt_v = (total_v / 10.0) * VOLTAGE_DIVIDER_RATIO;
 
+  // --- NEW CHARGING DETECTION LOGIC ---
+  if (raw_batt_v >= 4.22) { // Voltage spikes when USB power is applied
+    is_charging = true;
+  } else {
+    is_charging = false;
+  }
+
   if (smoothed_batt_v == 0.0) smoothed_batt_v = raw_batt_v; 
   smoothed_batt_v = (smoothed_batt_v * 0.8) + (raw_batt_v * 0.2);
 
@@ -381,7 +388,15 @@ void update_clock_ui() {
       lv_label_set_text_fmt(ui_lastHumidityValue, "%d%%", stored_hum);
     }
     if (stored_battery > 0) {
-      lv_label_set_text_fmt(ui_batteryPercentage, "%d", stored_battery);
+      if (is_charging) {
+        // Show charging symbol and turn text Green
+        lv_label_set_text_fmt(ui_batteryPercentage, LV_SYMBOL_CHARGE " %d", stored_battery);
+        lv_obj_set_style_text_color(ui_batteryPercentage, lv_color_hex(0x00FF00), 0); 
+      } else {
+        // Normal state (No symbol, White text)
+        lv_label_set_text_fmt(ui_batteryPercentage, "%d", stored_battery);
+        lv_obj_set_style_text_color(ui_batteryPercentage, lv_color_hex(0xFFFFFF), 0); 
+      }
       lv_arc_set_value(ui_batteryArc, stored_battery);
     }
   }
@@ -518,7 +533,7 @@ void loop() {
       show_toast("Syncing Time & Data...");
       
       syncTimeRTC();
-      performCloudSync(stored_hr, stored_temp, stored_hum, stored_bp_sys, stored_bp_dia);
+      performCloudSync(stored_hr, stored_temp, stored_hum, stored_bp_sys, stored_bp_dia, -1);
 
       sync_state = SYNC_EXECUTE;
       sync_timer = millis();
@@ -742,7 +757,8 @@ void loop() {
     last_1sec_timer = millis();
   }
 
-  if (millis() - last_battery_timer >= 60000) {
+  // Changed from 60000 (1 min) to 5000 (5 seconds) for faster charge detection
+  if (millis() - last_battery_timer >= 5000) {
     update_battery();
     last_battery_timer = millis();
   }
