@@ -10,9 +10,10 @@
 #include <Update.h>
 #include "ui.h" 
 
-// Custom Sensor Libraries
+// Custom Sensor & Configuration Libraries
 #include "config.h" 
 #include "ota.h"
+#include "api_sync.h" // <--- NEW API MODULE
 #include "rtc.h"
 #include "temperature.h"
 #include "heart_rate.h"
@@ -47,6 +48,8 @@ int temp_stable_count = 0;
 
 unsigned long bp_last_activity = 0;
 
+bool is_charging = false;
+
 // Screen Clear Tracking (60s Rule)
 lv_obj_t* current_screen = NULL;
 unsigned long left_hr_screen_time = 0;
@@ -62,8 +65,8 @@ bool is_wifi_on = false;
 bool wifi_connecting = false;
 unsigned long wifi_start_time = 0;
 
-// Sync State Machine
-enum SyncState { SYNC_IDLE, SYNC_START, SYNC_WAIT_WIFI, SYNC_WAIT_NTP };
+// Sync State Machine (Handles NTP Time + Cloud Data Push)
+enum SyncState { SYNC_IDLE, SYNC_START, SYNC_WAIT_WIFI, SYNC_EXECUTE };
 SyncState sync_state = SYNC_IDLE;
 unsigned long sync_timer = 0;
 
@@ -73,6 +76,10 @@ bool trigger_ota_process = false;
 // Non-blocking Timers
 unsigned long last_1sec_timer = 0;
 unsigned long last_battery_timer = 0;
+
+// Add under your existing global timers
+unsigned long last_activity_time = 0; 
+const unsigned long SCREEN_TIMEOUT_MS = 30000; // 30 seconds
 
 // ============================================================
 // STORED VALUES
@@ -92,7 +99,6 @@ lv_obj_t* toast_label = NULL;
 // ============================================================
 // UI HELPER FUNCTIONS
 // ============================================================
-/* LVGL Display Flush */
 void my_disp_flush(lv_disp_drv_t *disp_drv, const lv_area_t *area, lv_color_t *color_p) {
   uint32_t w = (area->x2 - area->x1 + 1);
   uint32_t h = (area->y2 - area->y1 + 1);
@@ -103,7 +109,6 @@ void my_disp_flush(lv_disp_drv_t *disp_drv, const lv_area_t *area, lv_color_t *c
   lv_disp_flush_ready(disp_drv);
 }
 
-/* LVGL Touch Read (Anti-Ghost Touch) */
 void my_touchpad_read(lv_indev_drv_t * indev_driver, lv_indev_data_t * data) {
   if (!is_screen_on) {
     data->state = LV_INDEV_STATE_RELEASED; 
@@ -113,12 +118,13 @@ void my_touchpad_read(lv_indev_drv_t * indev_driver, lv_indev_data_t * data) {
     data->state = LV_INDEV_STATE_PRESSED; 
     data->point.x = touch.data.x;
     data->point.y = touch.data.y;
+    
+    last_activity_time = millis(); // <--- ADD THIS: Reset timer on touch
   } else {
     data->state = LV_INDEV_STATE_RELEASED; 
   }
 }
 
-/* Dynamic Toast Notification (Auto-destructs) */
 void show_toast(const char* msg) {
   if (toast_label != NULL) {
     lv_obj_del(toast_label);
@@ -163,7 +169,7 @@ void start_hr_measurement(lv_event_t * e) {
     hr_hist_count = 0;
     start_HEART(); 
     set_button_state(ui_buttonHeart, ui_StartMeasure2, true, 0xFA4040, 0x880000);
-    lv_label_set_text(ui_heartRateLive, "--"); // Keep clean UI
+    lv_label_set_text(ui_heartRateLive, "--"); 
   }
 }
 
@@ -194,6 +200,7 @@ void start_bp_measurement(lv_event_t * e) {
 
 void start_sync_event(lv_event_t * e) {
   if (sync_state == SYNC_IDLE) {
+    Serial.println("\nDEBUG: [SYNC] 'Sync Now' Button Pressed!");
     sync_state = SYNC_START;
     show_toast("Starting Sync...");
   }
@@ -243,7 +250,6 @@ void screen8_loaded_cb(lv_event_t * e) {
 }
 
 void screen8_unloaded_cb(lv_event_t * e) {
-  // Guarantee popups are killed if user swipes away
   _ui_opacity_set(ui_Popup1, 0);
   _ui_opacity_set(ui_Popup2, 0);
 }
@@ -337,7 +343,6 @@ void downloadAndApplyFirmware(String targetVersion) {
   lv_timer_handler();
   http.end();
   
-  // Auto-hide popup on failure
   lv_timer_create([](lv_timer_t* t){ _ui_opacity_set(ui_Popup1, 0); lv_timer_del(t); }, 3000, NULL);
 }
 
@@ -345,7 +350,6 @@ void downloadAndApplyFirmware(String targetVersion) {
 // BATTERY & CLOCK LOGIC
 // ============================================================
 void update_battery() {
-  // Burst read 10 samples to filter ADC noise
   float total_v = 0;
   for(int i = 0; i < 10; i++) {
     uint32_t adc_mv = analogReadMilliVolts(BATTERY_ADC_PIN);
@@ -353,7 +357,6 @@ void update_battery() {
   }
   float raw_batt_v = (total_v / 10.0) * VOLTAGE_DIVIDER_RATIO;
 
-  // Exponential Moving Average filter
   if (smoothed_batt_v == 0.0) smoothed_batt_v = raw_batt_v; 
   smoothed_batt_v = (smoothed_batt_v * 0.8) + (raw_batt_v * 0.2);
 
@@ -452,6 +455,7 @@ void setup() {
   lv_obj_add_event_cb(ui_confirmButton, ota_confirm_event_cb, LV_EVENT_RELEASED, NULL);
 
   update_battery();
+  last_activity_time = millis();
 }
 
 // ============================================================
@@ -470,6 +474,8 @@ void loop() {
       button_state = reading;
       if (button_state == LOW) { 
         is_screen_on = !is_screen_on;
+        last_activity_time = millis(); // <--- ADD THIS: Reset timer on button press
+        
         if (is_screen_on) {
           int val = (int)lv_slider_get_value(ui_Slider1);
           analogWrite(TFT_BL_PIN, map(val, 0, 100, 0, 255));
@@ -481,6 +487,12 @@ void loop() {
   }
   last_button_val = reading;
 
+  // --- AUTO SCREEN TIMEOUT LOGIC ---
+  if (is_screen_on && (millis() - last_activity_time > SCREEN_TIMEOUT_MS)) {
+    is_screen_on = false;
+    analogWrite(TFT_BL_PIN, 0); // Turn off backlight
+  }
+
   // --- WI-FI CONNECTION TIMEOUT TOAST ---
   if (is_wifi_on && wifi_connecting) {
     if (WiFi.status() == WL_CONNECTED) {
@@ -488,12 +500,13 @@ void loop() {
       wifi_connecting = false;
     } else if (millis() - wifi_start_time > 8000) {
       show_toast("Cannot Connect Wi-Fi");
-      wifi_connecting = false; // Stop checking
+      wifi_connecting = false; 
     }
   }
 
-  // --- NON-BLOCKING SYNC LOGIC ---
+  // --- NON-BLOCKING SYNC & CLOUD UPLOAD LOGIC ---
   if (sync_state == SYNC_START) {
+    Serial.println("DEBUG: [SYNC] Activating Wi-Fi for Sync...");
     WiFi.mode(WIFI_STA);
     WiFi.begin(WIFI_SSID, WIFI_PASS);
     sync_timer = millis();
@@ -501,17 +514,23 @@ void loop() {
   } 
   else if (sync_state == SYNC_WAIT_WIFI) {
     if (WiFi.status() == WL_CONNECTED) {
-      show_toast("Syncing Time...");
+      Serial.println("DEBUG: [SYNC] Wi-Fi Connected! Syncing Time & Data...");
+      show_toast("Syncing Time & Data...");
+      
       syncTimeRTC();
-      sync_state = SYNC_WAIT_NTP;
+      performCloudSync(stored_hr, stored_temp, stored_hum, stored_bp_sys, stored_bp_dia);
+
+      sync_state = SYNC_EXECUTE;
       sync_timer = millis();
     } else if (millis() - sync_timer > 10000) {
+      Serial.println("DEBUG: [SYNC] Failed - Wi-Fi Timeout!");
       show_toast("Sync Failed: No Wi-Fi");
       if (!is_wifi_on) { WiFi.disconnect(true, true); WiFi.mode(WIFI_OFF); }
       sync_state = SYNC_IDLE;
     }
   } 
-  else if (sync_state == SYNC_WAIT_NTP) {
+  else if (sync_state == SYNC_EXECUTE) {
+    Serial.println("DEBUG: [SYNC] Task Complete. Restoring previous Wi-Fi state.");
     show_toast("Sync Complete!");
     if (!is_wifi_on) {
       WiFi.disconnect(true, true);
@@ -523,7 +542,6 @@ void loop() {
   // --- SCREEN CANCELLATION TRAP & TIMER ARMING ---
   lv_obj_t* act_scr = lv_scr_act();
   if (current_screen != act_scr) {
-    // 1. Cancel Active Measurements Instantly
     if (current_screen == ui_Screen2 && hr_state == MEASURING) {
       stop_HEART();
       hr_state = IDLE;
@@ -545,18 +563,15 @@ void loop() {
       lv_label_set_text(ui_humLive, "--");
     }
 
-    // 2. Arm the "Clear Memory" 60-Second Timers for the screen we just left
     if (current_screen == ui_Screen2) left_hr_screen_time = millis();
     if (current_screen == ui_Screen5) left_temp_screen_time = millis();
 
-    // 3. Abort the 60-Second Timer if we just re-entered that exact screen
     if (act_scr == ui_Screen2) left_hr_screen_time = 0;
     if (act_scr == ui_Screen5) left_temp_screen_time = 0;
 
     current_screen = act_scr;
   }
 
-  // --- 60-SECOND AUTO CLEAR EXECUTION ---
   if (left_hr_screen_time > 0 && act_scr != ui_Screen2 && (millis() - left_hr_screen_time > 60000)) {
     lv_label_set_text(ui_heartRateLive, "--");
     left_hr_screen_time = 0;
@@ -567,14 +582,13 @@ void loop() {
     left_temp_screen_time = 0;
   }
 
-  // Skip Sensor processing if screen is physically off
   if (!is_screen_on) {
     delay(50);
     return; 
   }
 
   // ============================================================
-  // SENSOR STATE MACHINES (Smart Stabilization)
+  // SENSOR STATE MACHINES
   // ============================================================
   
   // --- HEART RATE ---
@@ -583,13 +597,10 @@ void loop() {
     
     if (bpm > 40 && bpm < 220) { 
       lv_label_set_text_fmt(ui_heartRateLive, "%d", bpm); 
-      
-      // Push into stabilization array
       hr_history[hr_hist_idx] = bpm;
       hr_hist_idx = (hr_hist_idx + 1) % 5;
       hr_hist_count++;
 
-      // Check if stabilized (+/- 3 BPM variance over 5 reads)
       if (hr_hist_count >= 5) {
         int min_hr = 999, max_hr = 0, sum = 0;
         for(int i=0; i<5; i++) {
@@ -607,7 +618,7 @@ void loop() {
       }
     } 
 
-    if (millis() - hr_meas_start > 20000) { // Hard 20s abandon timeout
+    if (millis() - hr_meas_start > 20000) { 
       stop_HEART();
       hr_state = SENSOR_ERROR;
       lv_label_set_text(ui_heartRateLive, "--");
@@ -618,24 +629,22 @@ void loop() {
 
   // --- TEMPERATURE & HUMIDITY ---
   if (temp_state == MEASURING) {
-    // Poll every 2 seconds to prevent I2C bus locking
     if (millis() - last_temp_poll > 2000) {
       AHT10_Data clim = readAHT10();
       
-      if (clim.temperature > -10.0 && clim.temperature < 80.0) { // Sanity check to drop 255/99% noise
+      if (clim.temperature > -10.0 && clim.temperature < 80.0) { 
         char temp_buf[10];
         dtostrf(clim.temperature, 4, 1, temp_buf);
         lv_label_set_text_fmt(ui_tempLive, "%s°C", temp_buf);
         lv_label_set_text_fmt(ui_humLive, "%d%%", (int)clim.humidity);
         
-        // Stabilization logic (< 0.2 variance)
         float diff = abs(clim.temperature - last_temp_val);
         last_temp_val = clim.temperature;
         
         if (diff <= 0.2) temp_stable_count++;
         else temp_stable_count = 0;
 
-        if (temp_stable_count >= 3) { // Stable for 3 consecutive polls
+        if (temp_stable_count >= 3) { 
           stored_temp = clim.temperature;
           stored_hum = (int)clim.humidity;
           temp_state = COMPLETE;
@@ -644,7 +653,7 @@ void loop() {
       }
       last_temp_poll = millis();
     }
-    if (millis() - temp_meas_start > 20000) { // 20s Hard timeout
+    if (millis() - temp_meas_start > 20000) { 
       temp_state = SENSOR_ERROR;
       set_button_state(ui_buttonTemp, ui_StartMeasure5, false, 0xB25100, 0);
       lv_label_set_text(ui_tempLive, "--");
@@ -658,7 +667,7 @@ void loop() {
     BP_Data bp = readBP();
     
     if (bp.status == 's' || bp.status == 'w') {
-      bp_last_activity = millis(); // actively pumping, delay timeout
+      bp_last_activity = millis(); 
     } 
     else if (bp.status == 'v') { 
       stored_bp_sys = bp.sys;
@@ -681,7 +690,7 @@ void loop() {
       show_toast("BP Error/Finished");
     }
 
-    if (millis() - bp_last_activity > 10000) { // 10s of total silence
+    if (millis() - bp_last_activity > 10000) { 
       stop_BP();
       bp_state = SENSOR_ERROR;
       set_button_state(ui_buttonBP, ui_StartMeasure4, false, 0x007E79, 0);
@@ -718,7 +727,8 @@ void loop() {
         _ui_opacity_set(ui_Popup1, 0); 
         _ui_opacity_set(ui_Popup2, 255); 
         static lv_obj_t* p2_lbl = NULL;
-        if(!p2_lbl) { p2_lbl = lv_label_create(ui_Popup2); lv_obj_center(p2_lbl); lv_obj_set_style_text_color(p2_lbl, lv_color_hex(0xFFFFFF), 0); }
+        if(!p2_lbl) { p2_lbl = lv_label_create(ui_Popup2); lv_obj_center(p2_lbl); lv_obj_set_style_text_color(p2_lbl, lv_color_hex(0xFFFFFF), 0);
+        }
         lv_label_set_text(p2_lbl, "System is up to date!");
         
         lv_timer_create([](lv_timer_t* t){ _ui_opacity_set(ui_Popup2, 0); lv_timer_del(t); }, 3000, NULL);
@@ -739,84 +749,3 @@ void loop() {
 
   delay(5); 
 }
-
-
-/*
-#include "config.h"
-#include <Wire.h>
-#include "temperature.h"
-#include "heart_rate.h"
-#include "rtc.h"
-#include "BP.h"
-#include "battery.h"
-
-void setup() {
-    Serial.begin(115200);
-    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
-
-    // Starting delay
-    delay(500);
-    Serial.println("Initializing AHT10 Temp Sensor... ");
-    init_AHT10();
-
-    Serial.println("Initializing MAX30102 Heart Sensor... ");
-    init_HEART();
-
-    Serial.println("Initializing Real Time Clock... ");
-    init_RTC();
-
-    Serial.println("Initializing Blood Pressure Monitor... ");
-    init_BP();  //Turn on/start hearing on RX pin 44
-
-    Serial.println("Initializing Battery Measuring Code... ");
-    init_BATTERY();
-
-}
-
-
-
-void loop()
-
-{
-
-  //This is how you can access data from the sensors once they are initialised successfully
-  AHT10_Data live = readAHT10();
-  Serial.println(live.humidity);
-  Serial.println(live.temperature);
-  delay(500);
-
-  live_bpm = readHEART();
-  Serial.println(live_bpm);
-
-  RTC_Data time = readRTC();
-  Serial.println(time.second);
-  Serial.println(time.minute);
-  delay(1000);
-
-  BP_Data currentBP = readBP();
-  if(currentBP.status == 'w'){
-      // do nothing;
-  }
-  else if(currentBP.status == 's'){
-    Serial.println("Started :) Please Stay Calm");
-  }
-  else if(currentBP.status == 'e'){
-    Serial.println("Error 2,4,6");
-  }
-  else if(currentBP.status == 'v'){
-  Serial.println(currentBP.sys);  //systolic pressure
-  Serial.println(currentBP.dia);  //diastolic pressure
-  Serial.println(currentBP.heart);  //heart beat
-  Serial.println(currentBP.status); //For debugging check BP.h
-  }
-
-  else if(currentBP.status == 'o'){
-    stop_BP(); //Turn off RX pin 44
-  }
-
-  Data_BATTERY live_battery = readBATTERY();
-  Serial.println(live_battery.batt_voltage);  //battery voltage
-  Serial.println(live_battery.percentage);  //battery capacity(%)
-  delay(1000);
-}
-*/

@@ -48,7 +48,6 @@ extern const char* WIFI_SSID = "PHENIX-AX10";
 extern const char* WIFI_PASS = "03323359065";
 
 
-
 #define VERCEL_API_URL "https://patient-health-monitoring-pi.vercel.app/api/entry"
 #define VERCEL_API_KEY "your_auth_token_here"
 #define OTA_UPDATE_URL "https://your-custom-dashboard.vercel.app/api/firmware.bin"
@@ -56,7 +55,7 @@ extern const char* WIFI_PASS = "03323359065";
 // ==========================================
 // 4. POWER MANAGEMENT & THRESHOLDS
 // ==========================================
-#define SCREEN_TIMEOUT_MS 0000 // Go to sleep after 10 seconds of inactivity
+// #define SCREEN_TIMEOUT_MS 30000 // Go to sleep after 10 seconds of inactivity
 #define LONG_PRESS_MS 2000  // 2 seconds for a long button press (e.g., power off)
 #define SYNC_INTERVAL_MINUTES 60   // Wake Wi-Fi and sync to Vercel every 60 mins
 
