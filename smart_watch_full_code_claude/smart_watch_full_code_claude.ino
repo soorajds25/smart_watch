@@ -22,7 +22,8 @@
 #include "api_sync.h"
 #include "rtc.h"
 #include "temperature.h"
-#include "heart_rate.h"
+#include "SpO2.h"
+#include "heart_rate.h"   // reads the MAX30102 and feeds SpO2.h
 #include "battery.h"
 #include "BP.h"
 
@@ -41,11 +42,36 @@ SensorState hr_state = IDLE;
 SensorState temp_state = IDLE;
 SensorState bp_state = IDLE;
 
-// Smart Stabilization Tracking
+// Heart-rate measurement session (the algorithm itself lives in heart_rate.h)
+#ifndef HR_MANUAL_TIMEOUT_MS
+#define HR_MANUAL_TIMEOUT_MS   30000   // user-started measurement
+#endif
+#ifndef HR_AUTO_TIMEOUT_MS
+#define HR_AUTO_TIMEOUT_MS     20000   // scheduled (background) measurement
+#endif
+#ifndef HR_AUTO_NOFINGER_MS
+#define HR_AUTO_NOFINGER_MS    3000    // background measurement aborts if nothing is on the sensor
+#endif
+#ifndef HR_MANUAL_HINT_MS
+#define HR_MANUAL_HINT_MS      3000    // "Place finger" hint for manual measurements
+#endif
+
 unsigned long hr_meas_start = 0;
-int hr_history[5];
-int hr_hist_idx = 0;
-int hr_hist_count = 0;
+unsigned long hr_last_finger_ms = 0;
+bool hr_auto = false;
+bool hr_hint_shown = false;
+int hr_live_shown = 0;
+int spo2_live_shown = 0;
+unsigned long hr_done_ms = 0;   // when HR finished while SpO2 was still pending
+
+// How SpO2 numbers are written to the labels. Change to "%d" if your label
+// already has a "%" next to it in the UI.
+#ifndef SPO2_LABEL_FMT
+#define SPO2_LABEL_FMT "%d%%"
+#endif
+#ifndef SPO2_GRACE_MS
+#define SPO2_GRACE_MS          8000    // after HR is done, wait this long for SpO2 before saving HR alone
+#endif
 
 unsigned long temp_meas_start = 0;
 unsigned long last_temp_poll = 0;
@@ -127,7 +153,7 @@ struct HealthRecord {
   uint8_t sent_mask;
 };
 
-const int MAX_RECORDS = 24; // kept after failed syncs (24 x ~44 B in RTC memory)
+const int MAX_RECORDS = 48; // HR and temp are queued separately (48 x ~44 B in RTC memory)
 RTC_DATA_ATTR HealthRecord sync_queue[MAX_RECORDS];
 RTC_DATA_ATTR int queue_index = 0;
 
@@ -150,6 +176,26 @@ void get_iso_timestamp(char* buffer) {
   RTC_Data t = readRTC(); 
   sprintf(buffer, "%04d-%02d-%02dT%02d:%02d:%02dZ", 
           t.year, t.month, t.day, t.hour, t.minute, t.second);
+}
+
+// Queue one finished measurement with its own timestamp.
+// (HR+SpO2 and temperature are queued separately, so a manual HR reading is never
+//  uploaded with the wrong time, and nothing waits for the other sensor.)
+void queue_record(int hr, float temp, int hum, int spo2) {
+  if (queue_index >= MAX_RECORDS) {
+    // Queue full (several failed syncs): drop the oldest record, keep the newest
+    for (int i = 1; i < MAX_RECORDS; i++) sync_queue[i - 1] = sync_queue[i];
+    queue_index = MAX_RECORDS - 1;
+  }
+  HealthRecord &r = sync_queue[queue_index];
+  r.hr = hr;
+  r.temp = temp;
+  r.hum = hum;
+  r.spo2 = spo2;
+  r.sent_mask = 0;
+  get_iso_timestamp(r.timestamp);
+  r.has_data = true;
+  queue_index++;
 }
 
 void my_disp_flush(lv_disp_drv_t *disp_drv, const lv_area_t *area, lv_color_t *color_p) {
@@ -234,16 +280,80 @@ void update_status_icons() {
 // ============================================================
 // EVENT CALLBACKS 
 // ============================================================
-void start_hr_measurement(lv_event_t * e) {
-  if (hr_state != MEASURING) {
-    hr_state = MEASURING;
-    hr_meas_start = millis();
-    hr_hist_idx = 0;
-    hr_hist_count = 0;
-    start_HEART(); 
-    set_button_state(ui_buttonHeart, ui_StartMeasure2, true, 0xFA4040, 0x880000);
-    lv_label_set_text(ui_heartRateLive, "--"); 
+// Screen 2 (Heart Rate) and Screen 3 (SpO2) are two views of the same measurement.
+bool is_hr_screen(lv_obj_t* scr) {
+  return scr == ui_Screen2 || scr == ui_Screen3;
+}
+
+// Keep both "Start Measuring" buttons (Screen 2 and Screen 3) in the same state
+void set_hr_buttons(bool measuring) {
+  set_button_state(ui_buttonHeart, ui_StartMeasure2, measuring, 0xFA4040, 0x880000);
+  set_button_state(ui_buttonSpO2,  ui_StartMeasure3, measuring, 0x199010, 0x0B4A08);
+}
+
+void begin_hr_measurement(bool auto_mode) {
+  if (hr_state == MEASURING) return;
+  if (!heart_sensor_ok()) {
+    if (!auto_mode) show_toast("HR sensor not found");
+    return;
   }
+  hr_state = MEASURING;
+  hr_auto = auto_mode;
+  hr_meas_start = millis();
+  hr_last_finger_ms = millis();
+  hr_hint_shown = false;
+  hr_live_shown = 0;
+  spo2_live_shown = 0;
+  hr_done_ms = 0;
+  start_HEART();
+  if (!auto_mode) {
+    set_hr_buttons(true);
+    lv_label_set_text(ui_heartRateLive, "--");
+    lv_label_set_text(ui_SpO2Live, "--");
+  }
+}
+
+// One measurement session produces HR and SpO2 together.
+// hr_ok / spo2_ok say which of the two results are valid.
+void finish_hr_measurement(bool hr_ok, bool spo2_ok, const char* fail_toast) {
+  stop_HEART();
+  hr_state = IDLE;
+  set_hr_buttons(false);
+
+  if (hr_ok) {
+    stored_hr = heart_result();
+    lv_label_set_text_fmt(ui_heartRateLive, "%d", stored_hr);
+  } else {
+    lv_label_set_text(ui_heartRateLive, "--");
+  }
+
+  if (spo2_ok) {
+    stored_spo2 = spo2_result();
+    lv_label_set_text_fmt(ui_SpO2Live, SPO2_LABEL_FMT, stored_spo2);
+  } else {
+    lv_label_set_text(ui_SpO2Live, "--");
+  }
+
+  if (hr_ok || spo2_ok) {
+    queue_record(hr_ok ? stored_hr : 0, 0.0f, 0, spo2_ok ? stored_spo2 : 0);
+    Serial.printf("DEBUG: [HR] Result %d BPM, SpO2 %d%%\n", hr_ok ? stored_hr : 0, spo2_ok ? stored_spo2 : 0);
+    if (!hr_auto) {
+      if (hr_ok && !spo2_ok) show_toast("SpO2 not measured");
+      else if (!hr_ok && spo2_ok) show_toast("HR not measured");
+    }
+  } else {
+    if (fail_toast && !hr_auto) show_toast(fail_toast);
+    Serial.println("DEBUG: [HR] Measurement failed / aborted");
+  }
+}
+
+// Used by BOTH the Heart Rate button (Screen 2) and the SpO2 button (Screen 3):
+// one measurement gives HR and SpO2.
+void start_hr_measurement(lv_event_t * e) {
+  begin_hr_measurement(false);
+  // The generated UI handler for the SpO2 button rewrites a label on release,
+  // so make sure both buttons show the real state again.
+  if (hr_state == MEASURING && !hr_auto) set_hr_buttons(true);
 }
 
 void start_temp_measurement(lv_event_t * e) {
@@ -526,6 +636,10 @@ void update_clock_ui() {
       lv_label_set_text_fmt(ui_lastHeartRate, "%d", stored_hr);
       lv_arc_set_value(ui_heartRateArc, stored_hr);
     }
+    if (stored_spo2 > 0) {
+      lv_label_set_text_fmt(ui_lastSpO2Value, SPO2_LABEL_FMT, stored_spo2);
+      lv_arc_set_value(ui_spO2Arc, stored_spo2);
+    }
     // Check if it's not exactly 0.0 (allowing for negative winter temps)
     if (stored_temp != 0.0 || stored_hum != 0) {
       char temp_buf[10];
@@ -793,6 +907,7 @@ void setup() {
 
   // Bind UI Callbacks
   lv_obj_add_event_cb(ui_buttonHeart, start_hr_measurement, LV_EVENT_CLICKED, NULL);
+  lv_obj_add_event_cb(ui_buttonSpO2, start_hr_measurement, LV_EVENT_CLICKED, NULL);
   lv_obj_add_event_cb(ui_buttonTemp, start_temp_measurement, LV_EVENT_CLICKED, NULL);
   lv_obj_add_event_cb(ui_buttonBP, start_bp_measurement, LV_EVENT_CLICKED, NULL);
   lv_obj_add_event_cb(ui_wifiSwitch, wifi_toggle, LV_EVENT_VALUE_CHANGED, NULL);
@@ -896,11 +1011,12 @@ void loop() {
   // --- SCREEN CANCELLATION TRAP & TIMER ARMING ---
   lv_obj_t* act_scr = lv_scr_act();
   if (current_screen != act_scr) {
-    if (current_screen == ui_Screen2 && hr_state == MEASURING) {
+    if (is_hr_screen(current_screen) && !is_hr_screen(act_scr) && hr_state == MEASURING && !hr_auto) {
       stop_HEART();
       hr_state = IDLE;
-      set_button_state(ui_buttonHeart, ui_StartMeasure2, false, 0xFA4040, 0);
+      set_hr_buttons(false);
       lv_label_set_text(ui_heartRateLive, "--");
+      lv_label_set_text(ui_SpO2Live, "--");
     }
     else if (current_screen == ui_Screen4 && bp_state == MEASURING) {
       stop_BP();
@@ -917,17 +1033,18 @@ void loop() {
       lv_label_set_text(ui_humLive, "--");
     }
 
-    if (current_screen == ui_Screen2) left_hr_screen_time = millis();
+    if (is_hr_screen(current_screen) && !is_hr_screen(act_scr)) left_hr_screen_time = millis();
     if (current_screen == ui_Screen5) left_temp_screen_time = millis();
 
-    if (act_scr == ui_Screen2) left_hr_screen_time = 0;
+    if (is_hr_screen(act_scr)) left_hr_screen_time = 0;
     if (act_scr == ui_Screen5) left_temp_screen_time = 0;
 
     current_screen = act_scr;
   }
 
-  if (left_hr_screen_time > 0 && act_scr != ui_Screen2 && (millis() - left_hr_screen_time > 60000)) {
+  if (left_hr_screen_time > 0 && !is_hr_screen(act_scr) && (millis() - left_hr_screen_time > 60000)) {
     lv_label_set_text(ui_heartRateLive, "--");
+    lv_label_set_text(ui_SpO2Live, "--");
     left_hr_screen_time = 0;
   }
   if (left_temp_screen_time > 0 && act_scr != ui_Screen5 && (millis() - left_temp_screen_time > 60000)) {
@@ -946,37 +1063,44 @@ void loop() {
   
   // --- HEART RATE ---
   if (hr_state == MEASURING) {
-    int bpm = readHEART();
-    
-    if (bpm > 40 && bpm < 220) { 
-      lv_label_set_text_fmt(ui_heartRateLive, "%d", bpm); 
-      hr_history[hr_hist_idx] = bpm;
-      hr_hist_idx = (hr_hist_idx + 1) % 5;
-      hr_hist_count++;
+    heart_update();                       // reads the FIFO and detects beats (heart_rate.h)
+    unsigned long now = millis();
 
-      if (hr_hist_count >= 5) {
-        int min_hr = 999, max_hr = 0, sum = 0;
-        for(int i=0; i<5; i++) {
-          if (hr_history[i] < min_hr) min_hr = hr_history[i];
-          if (hr_history[i] > max_hr) max_hr = hr_history[i];
-          sum += hr_history[i];
-        }
-        if (max_hr - min_hr <= 3) { 
-          stored_hr = sum / 5;
-          hr_state = COMPLETE;
-          stop_HEART();
-          set_button_state(ui_buttonHeart, ui_StartMeasure2, false, 0xFA4040, 0);
-          lv_label_set_text_fmt(ui_heartRateLive, "%d", stored_hr);
-        }
-      }
-    } 
+    if (heart_finger_present()) hr_last_finger_ms = now;
 
-    if (millis() - hr_meas_start > 20000) { 
-      stop_HEART();
-      hr_state = SENSOR_ERROR;
-      lv_label_set_text(ui_heartRateLive, "--");
-      set_button_state(ui_buttonHeart, ui_StartMeasure2, false, 0xFA4040, 0);
-      show_toast("HR Timeout");
+    // Live value (median of the beats so far)
+    int live = heart_live_bpm();
+    if (live > 0 && live != hr_live_shown) {
+      lv_label_set_text_fmt(ui_heartRateLive, "%d", live);
+      hr_live_shown = live;
+    }
+
+    // Live SpO2 (median of the beats so far)
+    int spo2_now = spo2_live();
+    if (spo2_now > 0 && spo2_now != spo2_live_shown) {
+      lv_label_set_text_fmt(ui_SpO2Live, SPO2_LABEL_FMT, spo2_now);
+      spo2_live_shown = spo2_now;
+    }
+
+    bool hr_ok = heart_done();
+    bool sp_ok = spo2_done();
+    if (hr_ok && hr_done_ms == 0) hr_done_ms = now;
+
+    if (hr_ok && sp_ok) {
+      finish_hr_measurement(true, true, NULL);
+    }
+    else if (hr_ok && !sp_ok && (now - hr_done_ms > SPO2_GRACE_MS)) {
+      finish_hr_measurement(true, false, NULL);    // HR is good, SpO2 never settled: keep HR
+    }
+    else if (hr_auto && (now - hr_last_finger_ms > HR_AUTO_NOFINGER_MS)) {
+      finish_hr_measurement(hr_ok, sp_ok, NULL);   // not worn: don't waste LED power
+    }
+    else if (now - hr_meas_start > (hr_auto ? HR_AUTO_TIMEOUT_MS : HR_MANUAL_TIMEOUT_MS)) {
+      finish_hr_measurement(hr_ok, sp_ok, "HR Timeout");
+    }
+    else if (!hr_auto && !hr_hint_shown && (now - hr_last_finger_ms > HR_MANUAL_HINT_MS)) {
+      show_toast("Place finger on sensor");
+      hr_hint_shown = true;
     }
   }
 
@@ -1005,7 +1129,8 @@ void loop() {
         if (temp_stable_count >= 3) { 
           stored_temp = clim.temperature;
           stored_hum = (int)clim.humidity;
-          temp_state = COMPLETE;
+          queue_record(0, stored_temp, stored_hum, 0);
+          temp_state = IDLE;
           set_button_state(ui_buttonTemp, ui_StartMeasure5, false, 0xB25100, 0);
           
           Serial.println("DEBUG: [TEMP] Measurement COMPLETE!");
@@ -1018,8 +1143,8 @@ void loop() {
       last_temp_poll = millis();
     }
     
-    if (millis() - temp_meas_start > 20000) { 
-      temp_state = SENSOR_ERROR;
+    if (temp_state == MEASURING && millis() - temp_meas_start > 20000) { 
+      temp_state = IDLE;
       set_button_state(ui_buttonTemp, ui_StartMeasure5, false, 0xB25100, 0);
       lv_label_set_text(ui_tempLive, "--");
       lv_label_set_text(ui_humLive, "--");
@@ -1030,32 +1155,6 @@ void loop() {
          show_toast("Temp Timeout");
       }
     }
-  }
-
-  // --- QUEUE RECORDING TRAP (Saves reading if both sensors finished) ---
-  if ((hr_state == COMPLETE || hr_state == SENSOR_ERROR) && 
-      (temp_state == COMPLETE || temp_state == SENSOR_ERROR)) {
-    
-    // Only save if at least one sensor succeeded
-    if (hr_state == COMPLETE || temp_state == COMPLETE) {
-      if (queue_index >= MAX_RECORDS) {
-        // Queue full (several failed syncs): drop the oldest record, keep the newest
-        for (int i = 1; i < MAX_RECORDS; i++) sync_queue[i - 1] = sync_queue[i];
-        queue_index = MAX_RECORDS - 1;
-      }
-      sync_queue[queue_index].hr = (hr_state == COMPLETE) ? stored_hr : 0;
-      sync_queue[queue_index].temp = (temp_state == COMPLETE) ? stored_temp : 0.0;
-      sync_queue[queue_index].hum = (temp_state == COMPLETE) ? stored_hum : 0;
-      sync_queue[queue_index].spo2 = stored_spo2; 
-      sync_queue[queue_index].sent_mask = 0;
-      
-      get_iso_timestamp(sync_queue[queue_index].timestamp);
-      sync_queue[queue_index].has_data = true;
-      queue_index++;
-    }
-    // Return states to IDLE to wait for the next 5 min interval
-    hr_state = IDLE;
-    temp_state = IDLE;
   }
 
   // --- BLOOD PRESSURE ---
@@ -1156,11 +1255,7 @@ void loop() {
     last_auto_measure = millis(); 
 
     if (hr_state == IDLE) {
-      hr_state = MEASURING;
-      hr_meas_start = millis();
-      hr_hist_idx = 0;
-      hr_hist_count = 0;
-      start_HEART();
+      begin_hr_measurement(true);
     }
     
     if (temp_state == IDLE) {
