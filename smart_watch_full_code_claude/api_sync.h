@@ -4,8 +4,11 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
-#include <WiFiClientSecure.h> // <--- CRITICAL FIX: ESP32 secure client library
+#include <WiFiClientSecure.h> 
 #include <ArduinoJson.h> 
+
+// Tell this header file that stored_bp_hr exists in the main .ino file
+extern int stored_bp_hr; 
 
 // ==========================================
 // CLOUD API CONFIGURATION
@@ -13,7 +16,9 @@
 const char* cloudApiUrl = "https://patient-health-monitoring-pi.vercel.app/api/entry";
 
 // NOTE: Replace this with your authentic token from the dashboard
-const String DEVICE_TOKEN = "pdk_a9faab960e6b1f2e8df393e349ea467948aeaced1a1618e7"; 
+// const String DEVICE_TOKEN = "pdk_a9faab960e6b1f2e8df393e349ea467948aeaced1a1618e7"; //Device is Sooraj
+
+const String DEVICE_TOKEN = "pdk_a9faab960e6b1f2e8df393e349ea467948aeaced1a1618e7";
 
 // Helper function to serialize and send JSON
 bool sendReadingToCloud(StaticJsonDocument<128>& jsonDoc) {
@@ -22,13 +27,11 @@ bool sendReadingToCloud(StaticJsonDocument<128>& jsonDoc) {
     return false;
   }
 
-  // CRITICAL FIX: Set up the secure client to ignore SSL verification
   WiFiClientSecure client;
   client.setInsecure(); 
 
   HTTPClient http;
   
-  // Pass the secure client into the HTTP client
   http.begin(client, cloudApiUrl);
   
   http.addHeader("Content-Type", "application/json");
@@ -55,13 +58,12 @@ bool sendReadingToCloud(StaticJsonDocument<128>& jsonDoc) {
 }
 
 // Master function triggered by the "Sync Now" button
-// Added spo2 as the LAST parameter to prevent main loop crashes
 bool performCloudSync(int hr, float temp, int hum, int bp_sys, int bp_dia, int spo2) {
   Serial.println("\nDEBUG: [API] --- EVALUATING DATA FOR CLOUD SYNC ---");
   bool overallSuccess = true;
   bool dataSent = false;
 
-  // 1. BLOOD PRESSURE (Documented)
+  // 1. BLOOD PRESSURE
   if (bp_sys > 0 && bp_dia > 0) {
     Serial.println("DEBUG: [API] Valid BP found. Uploading...");
     
@@ -74,13 +76,21 @@ bool performCloudSync(int hr, float temp, int hum, int bp_sys, int bp_dia, int s
     diaDoc["bp_value"] = bp_dia;
     diaDoc["bp_type"] = "diastolic";
     if (!sendReadingToCloud(diaDoc)) overallSuccess = false;
+
+    // Include BP-derived heart rate separately with source flag
+    if (stored_bp_hr > 0) {
+        StaticJsonDocument<128> bpHrDoc;
+        bpHrDoc["heart_rate"] = stored_bp_hr;
+        bpHrDoc["source"] = "bp_monitor"; 
+        if (!sendReadingToCloud(bpHrDoc)) overallSuccess = false;
+    }
     
     dataSent = true;
   } else {
     Serial.println("DEBUG: [API] Skipping BP -> Value is 0");
   }
 
-  // 2. HEART RATE (Educated Guess from Dashboard UI)
+  // 2. HEART RATE (MAX30102)
   if (hr > 0) {
     Serial.println("DEBUG: [API] Valid Heart Rate found. Uploading...");
     StaticJsonDocument<128> hrDoc;
@@ -91,7 +101,7 @@ bool performCloudSync(int hr, float temp, int hum, int bp_sys, int bp_dia, int s
     Serial.println("DEBUG: [API] Skipping Heart Rate -> Value is 0");
   }
 
-  // 3. TEMPERATURE (Educated Guess from Dashboard UI)
+  // 3. TEMPERATURE 
   if (temp > 0.0) {
     Serial.println("DEBUG: [API] Valid Temperature found. Uploading...");
     StaticJsonDocument<128> tempDoc;
@@ -102,7 +112,7 @@ bool performCloudSync(int hr, float temp, int hum, int bp_sys, int bp_dia, int s
     Serial.println("DEBUG: [API] Skipping Temperature -> Value is 0");
   }
 
-  // 4. HUMIDITY (Educated Guess from Dashboard UI)
+  // 4. HUMIDITY
   if (hum > 0) {
     Serial.println("DEBUG: [API] Valid Humidity found. Uploading...");
     StaticJsonDocument<128> humDoc;
@@ -113,7 +123,7 @@ bool performCloudSync(int hr, float temp, int hum, int bp_sys, int bp_dia, int s
     Serial.println("DEBUG: [API] Skipping Humidity -> Value is 0");
   }
 
-  // 5. SpO2 (Documented)
+  // 5. SpO2
   if (spo2 > 0) {
     Serial.println("DEBUG: [API] Valid SpO2 found. Uploading...");
     StaticJsonDocument<128> spo2Doc;

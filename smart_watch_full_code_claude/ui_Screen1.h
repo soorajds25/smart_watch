@@ -31,8 +31,11 @@ extern lv_obj_t * ui_batteryIcon;
 extern lv_obj_t * ui_batteryPercentage;
 extern lv_obj_t * ui_heartRateIndicator;
 extern lv_obj_t * ui_BPMonitorIndicator;
-extern lv_obj_t * ui_wifiIndicator;
+extern lv_obj_t * ui_humidity_new_icon;
+extern lv_obj_t * ui_temp_new_icon;
 extern lv_obj_t * ui_tempAndHumidityIndicator;
+extern lv_obj_t * ui_wifiIndicator;
+extern lv_obj_t * ui_spo2_icon_new;
 // CUSTOM VARIABLES
 extern lv_obj_t * uic_bodyTempValue;
 

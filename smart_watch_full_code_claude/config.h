@@ -63,9 +63,9 @@ extern const char* WIFI_PASS = "03323359065";
 
 // --- Three-state power management ---
 #define ACTIVE_CPU_MHZ            80          // CPU clock in all states (Wi-Fi needs >= 80)
-#define IDLE_TIMEOUT_MS           120000UL    // Active -> Idle after 2 min without interaction
+#define IDLE_TIMEOUT_MS           60000UL     // Active -> Idle (light sleep) after 60 s without interaction
 #define DEEP_SLEEP_ENABLED        1           // 0 = never enter deep sleep (Idle forever)
-#define DEEP_SLEEP_TIMEOUT_MS     600000UL    // ADDITIONAL time in Idle before deep sleep (10 min)
+#define DEEP_SLEEP_TIMEOUT_MS     180000UL    // ADDITIONAL time in Idle before deep sleep (3 min); ignored while Continuous Measuring is ON
 #define DEEP_SLEEP_FINAL_SYNC     1           // 1 = try one cloud sync (up to 10 s) before deep sleep
 
 // Battery Calibration (Adjust based on your voltage divider resistors)

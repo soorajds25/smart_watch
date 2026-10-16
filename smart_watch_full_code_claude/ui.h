@@ -46,6 +46,12 @@ extern lv_obj_t * ui____initial_actions0;
 
 // IMAGES AND IMAGE SETS
 LV_IMG_DECLARE(ui_img_208041617);    // assets/valentine-heart-icon-6.png
+LV_IMG_DECLARE(ui_img_bp_icon_png);    // assets/BP icon.png
+LV_IMG_DECLARE(ui_img_humidity_icon_png);    // assets/humidity icon.png
+LV_IMG_DECLARE(ui_img_temp_icon_png);    // assets/temp icon.png
+LV_IMG_DECLARE(ui_img_temp_humidity_icon_png);    // assets/temp_humidity icon.png
+LV_IMG_DECLARE(ui_img_wifi_icon_png);    // assets/wifi icon.png
+LV_IMG_DECLARE(ui_img_spo2_icon_png);    // assets/SPO2 icon.png
 
 // UI INIT
 void ui_init(void);

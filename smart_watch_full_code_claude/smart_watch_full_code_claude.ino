@@ -79,6 +79,27 @@ float last_temp_val = 0.0;
 int temp_stable_count = 0;
 
 unsigned long bp_last_activity = 0;
+unsigned long bp_meas_start = 0;      // absolute start of the BP session (hard time limit)
+#ifndef BP_TIMEOUT_MS
+#define BP_TIMEOUT_MS 70000           // no 'v' / complete / error within this -> "BP Timeout"
+#endif
+
+// Continuous Measuring (Screen 9 switch): HR/SpO2 + temp/humidity every
+// AUTO_MEASURE_INTERVAL_MINUTES, even with the screen off, and no deep sleep.
+bool continuous_measuring = false;
+
+// Measure All (Screen 9 button): HR/SpO2 (if the MAX30102 is connected), then temp/humidity
+#ifndef MEASURE_ALL_GAP_MS
+#define MEASURE_ALL_GAP_MS 1500       // pause between steps so each toast can be read
+#endif
+enum MeasureAllStage { MA_IDLE, MA_HR, MA_GAP, MA_TEMP, MA_DONE_WAIT };
+MeasureAllStage ma_stage = MA_IDLE;
+unsigned long ma_stage_ms = 0;
+bool ma_hr_present = false;
+bool ma_hr_ok = false;                // HR and/or SpO2 produced a reading
+bool ma_temp_ok = false;              // temp/humidity produced a reading
+
+void update_clock_ui();               // defined further down
 
 // ------------------------------------------------------------
 // POWER STATES
@@ -96,6 +117,7 @@ bool display_asleep = false;
 unsigned long last_activity_time = 0; 
 unsigned long idle_start_time = 0;
 uint32_t last_lv_tick = 0;
+int current_brightness = DEFAULT_BRIGHTNESS; // Safe decoupled brightness state
 
 // Hardware Button State
 int last_button_val = HIGH;
@@ -148,7 +170,7 @@ struct HealthRecord {
   int spo2;
   float temp;
   int hum;
-  char timestamp[25]; // Holds "YYYY-MM-DDThh:mm:ssZ"
+  char timestamp[32]; // Increased to hold timezone offset safely
   bool has_data;
   uint8_t sent_mask;
 };
@@ -174,13 +196,12 @@ void lvgl_service() {
 // ============================================================
 void get_iso_timestamp(char* buffer) {
   RTC_Data t = readRTC(); 
-  sprintf(buffer, "%04d-%02d-%02dT%02d:%02d:%02dZ", 
+  // FIX: Appended IST timezone offset (+05:30) instead of UTC 'Z'
+  sprintf(buffer, "%04d-%02d-%02dT%02d:%02d:%02d+05:30", 
           t.year, t.month, t.day, t.hour, t.minute, t.second);
 }
 
 // Queue one finished measurement with its own timestamp.
-// (HR+SpO2 and temperature are queued separately, so a manual HR reading is never
-//  uploaded with the wrong time, and nothing waits for the other sensor.)
 void queue_record(int hr, float temp, int hum, int spo2) {
   if (queue_index >= MAX_RECORDS) {
     // Queue full (several failed syncs): drop the oldest record, keep the newest
@@ -215,8 +236,11 @@ void my_touchpad_read(lv_indev_drv_t * indev_driver, lv_indev_data_t * data) {
   }
   if (touch.available()) {
     data->state = LV_INDEV_STATE_PRESSED; 
-    data->point.x = touch.data.x;
-    data->point.y = touch.data.y;
+    
+    // Remap coordinates for rotation 3 (270 degrees)
+    data->point.x = 239 - touch.data.y;
+    data->point.y = touch.data.x;
+    
     last_activity_time = millis(); // Reset timeout on touch
   } else {
     data->state = LV_INDEV_STATE_RELEASED; 
@@ -280,12 +304,10 @@ void update_status_icons() {
 // ============================================================
 // EVENT CALLBACKS 
 // ============================================================
-// Screen 2 (Heart Rate) and Screen 3 (SpO2) are two views of the same measurement.
 bool is_hr_screen(lv_obj_t* scr) {
   return scr == ui_Screen2 || scr == ui_Screen3;
 }
 
-// Keep both "Start Measuring" buttons (Screen 2 and Screen 3) in the same state
 void set_hr_buttons(bool measuring) {
   set_button_state(ui_buttonHeart, ui_StartMeasure2, measuring, 0xFA4040, 0x880000);
   set_button_state(ui_buttonSpO2,  ui_StartMeasure3, measuring, 0x199010, 0x0B4A08);
@@ -293,6 +315,12 @@ void set_hr_buttons(bool measuring) {
 
 void begin_hr_measurement(bool auto_mode) {
   if (hr_state == MEASURING) return;
+  
+  // FIX: Attempt re-initialization if the sensor was attached after boot
+  if (!heart_sensor_ok()) {
+    init_HEART();
+  }
+  
   if (!heart_sensor_ok()) {
     if (!auto_mode) show_toast("HR sensor not found");
     return;
@@ -313,12 +341,11 @@ void begin_hr_measurement(bool auto_mode) {
   }
 }
 
-// One measurement session produces HR and SpO2 together.
-// hr_ok / spo2_ok say which of the two results are valid.
 void finish_hr_measurement(bool hr_ok, bool spo2_ok, const char* fail_toast) {
   stop_HEART();
   hr_state = IDLE;
   set_hr_buttons(false);
+  if (ma_stage == MA_HR) ma_hr_ok = (hr_ok || spo2_ok);
 
   if (hr_ok) {
     stored_hr = heart_result();
@@ -347,16 +374,12 @@ void finish_hr_measurement(bool hr_ok, bool spo2_ok, const char* fail_toast) {
   }
 }
 
-// Used by BOTH the Heart Rate button (Screen 2) and the SpO2 button (Screen 3):
-// one measurement gives HR and SpO2.
 void start_hr_measurement(lv_event_t * e) {
   begin_hr_measurement(false);
-  // The generated UI handler for the SpO2 button rewrites a label on release,
-  // so make sure both buttons show the real state again.
   if (hr_state == MEASURING && !hr_auto) set_hr_buttons(true);
 }
 
-void start_temp_measurement(lv_event_t * e) {
+void begin_temp_measurement() {
   if (temp_state != MEASURING) {
     temp_state = MEASURING;
     temp_meas_start = millis();
@@ -369,16 +392,90 @@ void start_temp_measurement(lv_event_t * e) {
   }
 }
 
+void start_temp_measurement(lv_event_t * e) {
+  begin_temp_measurement();
+}
+
 void start_bp_measurement(lv_event_t * e) {
   if (bp_state != MEASURING) {
     bp_state = MEASURING;
     bp_last_activity = millis();
+    bp_meas_start = millis();         // absolute start for the BP_TIMEOUT_MS limit
     init_BP(); 
     set_button_state(ui_buttonBP, ui_StartMeasure4, true, 0x007E79, 0x004040);
     lv_label_set_text(ui_sysLive, "--");
     lv_label_set_text(ui_diaLive, "--");
     lv_label_set_text(ui_heartRateLiveBP, "-- BPM");
   }
+}
+
+// ---------------- Screen 9: Continuous Measuring switch ----------------
+void continuous_toggle_event(lv_event_t * e) {
+  lv_obj_t * sw = lv_event_get_target(e);
+  continuous_measuring = lv_obj_has_state(sw, LV_STATE_CHECKED);
+  last_activity_time = millis();
+  if (continuous_measuring) {
+    // make the first cycle due right away, then every AUTO_MEASURE_INTERVAL_MINUTES
+    last_auto_measure = millis() - (AUTO_MEASURE_INTERVAL_MINUTES * 60000UL);
+    show_toast("Continuous ON");
+    Serial.println("DEBUG: [CONT] Continuous measuring ON (deep sleep disabled)");
+  } else {
+    show_toast("Continuous OFF");
+    Serial.println("DEBUG: [CONT] Continuous measuring OFF");
+  }
+}
+
+// ---------------- Screen 9: Measure All button ----------------
+void set_measure_all_button(bool busy) {
+  if (busy) {
+    lv_label_set_text(ui_measureAllText, "MEASURING...");
+    lv_obj_set_style_bg_color(ui_measureAllButton, lv_color_hex(0x0A6A00), 0);
+  } else {
+    lv_label_set_text(ui_measureAllText, "MEASURE ALL");
+    lv_obj_set_style_bg_color(ui_measureAllButton, lv_color_hex(0x10C400), 0);
+  }
+}
+
+void start_measure_all_event(lv_event_t * e) {
+  if (ma_stage != MA_IDLE) { show_toast("Already measuring"); return; }
+  if (hr_state == MEASURING || temp_state == MEASURING) { show_toast("Measurement in progress"); return; }
+
+  ma_hr_ok = false;
+  ma_temp_ok = false;
+  set_measure_all_button(true);
+
+  // Is the MAX30102 connected? (It may have been attached after boot.)
+  if (!heart_sensor_ok()) init_HEART();
+  ma_hr_present = heart_sensor_ok();
+
+  if (ma_hr_present) {
+    begin_hr_measurement(false);                 // manual-style session: hints + timeouts
+    if (hr_state == MEASURING) {
+      ma_stage = MA_HR;
+      show_toast("Measuring HR/SpO2...");
+      return;
+    }
+    ma_hr_present = false;                       // refused to start: treat as not available
+  }
+  show_toast("HR sensor not found - skipping");
+  ma_stage = MA_GAP;
+  ma_stage_ms = millis();
+}
+
+void finish_measure_all() {
+  ma_stage = MA_IDLE;
+  set_measure_all_button(false);
+  update_clock_ui();                             // refresh home-screen values if it is showing
+  update_status_icons();
+  last_activity_time = millis();
+
+  const char* msg;
+  if (ma_hr_ok && ma_temp_ok)              msg = "Measure All complete";
+  else if (!ma_hr_present && ma_temp_ok)   msg = "Done: HR sensor skipped";
+  else if (!ma_hr_ok && !ma_temp_ok)       msg = "Measure All failed";
+  else                                     msg = "Done: some readings failed";
+  show_toast(msg);
+  Serial.printf("DEBUG: [MEASURE ALL] %s (hr_present=%d hr_ok=%d temp_ok=%d)\n", msg, ma_hr_present, ma_hr_ok, ma_temp_ok);
 }
 
 void start_sync_event(lv_event_t * e) {
@@ -408,8 +505,8 @@ void wifi_toggle(lv_event_t * e) {
 
 void brightness_slider_event_cb(lv_event_t * e) {
   lv_obj_t * slider = lv_event_get_target(e);
-  int val = (int)lv_slider_get_value(slider);
-  analogWrite(TFT_BL_PIN, map(val, 0, 100, 0, 255));
+  current_brightness = (int)lv_slider_get_value(slider); // Decoupled brightness state
+  analogWrite(TFT_BL_PIN, map(current_brightness, 0, 100, 0, 255));
 }
 
 void screen8_loaded_cb(lv_event_t * e) {
@@ -532,7 +629,6 @@ void downloadAndApplyFirmware(String targetVersion) {
 // ============================================================
 // CLOUD SYNC LOGIC
 // ============================================================
-// Uploads one reading. Returns true only if the cloud accepted it.
 static bool upload_one(const char* key, float value, bool as_int, const char* ts) {
   StaticJsonDocument<128> doc;
   if (as_int) doc[key] = (int)value;
@@ -541,8 +637,6 @@ static bool upload_one(const char* key, float value, bool as_int, const char* ts
   return sendReadingToCloud(doc);
 }
 
-// Per-field "already uploaded" tracking: a failed upload is retried on the next
-// sync, and fields that DID upload are never sent twice.
 bool performHistoricalCloudSync() {
   Serial.println("\nDEBUG: [API] --- UPLOADING HISTORICAL QUEUE ---");
   bool overallSuccess = true;
@@ -555,9 +649,19 @@ bool performHistoricalCloudSync() {
     diaDoc["bp_value"] = stored_bp_dia; diaDoc["bp_type"] = "diastolic";
     
     if (!sendReadingToCloud(sysDoc) || !sendReadingToCloud(diaDoc)) overallSuccess = false;
-    else {
-      stored_bp_sys = 0; // Clear after successful sync
+    
+    // FIX: Include BP-derived heart rate separately with source flag
+    if (stored_bp_hr > 0) {
+        StaticJsonDocument<128> bpHrDoc;
+        bpHrDoc["heart_rate"] = stored_bp_hr;
+        bpHrDoc["source"] = "bp_monitor"; 
+        if (!sendReadingToCloud(bpHrDoc)) overallSuccess = false;
+    }
+
+    if (overallSuccess) {
+      stored_bp_sys = 0; 
       stored_bp_dia = 0;
+      stored_bp_hr = 0; 
     }
   }
 
@@ -577,7 +681,8 @@ bool performHistoricalCloudSync() {
       if (upload_one("heart_rate", r.hr, true, r.timestamp)) r.sent_mask |= 1; else overallSuccess = false;
     }
     if ((needed & 2) && !(r.sent_mask & 2)) {
-      if (upload_one("temperature", r.temp, false, r.timestamp)) r.sent_mask |= 2; else overallSuccess = false;
+      // FIX: Changed "temperature" key to "temp"
+      if (upload_one("temp", r.temp, false, r.timestamp)) r.sent_mask |= 2; else overallSuccess = false;
     }
     if ((needed & 4) && !(r.sent_mask & 4)) {
       if (upload_one("humidity", r.hum, true, r.timestamp)) r.sent_mask |= 4; else overallSuccess = false;
@@ -586,7 +691,7 @@ bool performHistoricalCloudSync() {
       if (upload_one("spo2", r.spo2, true, r.timestamp)) r.sent_mask |= 8; else overallSuccess = false;
     }
 
-    if ((r.sent_mask & needed) == needed) r.has_data = false;  // fully uploaded
+    if ((r.sent_mask & needed) == needed) r.has_data = false; 
   }
 
   // 3. Compact: drop fully-uploaded records, keep the failed ones for next time
@@ -615,7 +720,6 @@ void update_battery() {
   }
   float raw_batt_v = (total_v / 10.0) * VOLTAGE_DIVIDER_RATIO;
 
-  // Charging Detection (Adjust 4.22 based on your BMS)
   if (raw_batt_v >= 4.22) is_charging = true;
   else is_charging = false;
 
@@ -640,7 +744,6 @@ void update_clock_ui() {
       lv_label_set_text_fmt(ui_lastSpO2Value, SPO2_LABEL_FMT, stored_spo2);
       lv_arc_set_value(ui_spO2Arc, stored_spo2);
     }
-    // Check if it's not exactly 0.0 (allowing for negative winter temps)
     if (stored_temp != 0.0 || stored_hum != 0) {
       char temp_buf[10];
       dtostrf(stored_temp, 4, 1, temp_buf);
@@ -663,41 +766,37 @@ void update_clock_ui() {
 // ============================================================
 // POWER MANAGEMENT
 // ============================================================
-
-// True while something must NOT be interrupted by sleeping.
 bool sleep_inhibited() {
   return hr_state == MEASURING || temp_state == MEASURING || bp_state == MEASURING ||
-         sync_state != SYNC_IDLE || trigger_ota_process || wifi_connecting;
+         sync_state != SYNC_IDLE || trigger_ota_process || wifi_connecting ||
+         ma_stage != MA_IDLE;
 }
 
-// GC9A01 sleep-in / sleep-out (generic MIPI commands)
 void display_sleep() {
   if (display_asleep) return;
-  tft.writecommand(0x28);   // DISPOFF
+  tft.writecommand(0x28);   
   delay(10);
-  tft.writecommand(0x10);   // SLPIN
+  tft.writecommand(0x10);   
   delay(10);
   display_asleep = true;
 }
 
 void display_wake() {
   if (!display_asleep) return;
-  tft.writecommand(0x11);   // SLPOUT
-  delay(120);               // required settle time after SLPOUT
-  tft.writecommand(0x29);   // DISPON
+  tft.writecommand(0x11);   
+  delay(120);               
+  tft.writecommand(0x29);   
   delay(20);
   display_asleep = false;
 }
 
-// Wi-Fi is never kept on while the screen is off (unless a sync is running;
-// that sync turns it off itself when done).
 void wifi_force_off_for_idle() {
   if (is_wifi_on && sync_state == SYNC_IDLE) {
     WiFi.disconnect(true, true);
     WiFi.mode(WIFI_OFF);
     is_wifi_on = false;
     wifi_connecting = false;
-    lv_obj_clear_state(ui_wifiSwitch, LV_STATE_CHECKED);  // no event fired by this
+    lv_obj_clear_state(ui_wifiSwitch, LV_STATE_CHECKED);  
   }
 }
 
@@ -717,8 +816,10 @@ void enter_idle() {
 void wake_to_active() {
   if (power_state == PWR_ACTIVE) return;
   display_wake();
-  int val = (int)lv_slider_get_value(ui_Slider1);
-  analogWrite(TFT_BL_PIN, map(val, 0, 100, 0, 255));
+  
+  // FIX: Restore backlight safely from global state, decoupling from sleeping UI widget
+  analogWrite(TFT_BL_PIN, map(current_brightness, 0, 100, 0, 255));
+  
   power_state = PWR_ACTIVE;
   is_screen_on = true;
   last_activity_time = millis();
@@ -729,7 +830,6 @@ void wake_to_active() {
   Serial.println("DEBUG: [PWR] -> ACTIVE");
 }
 
-// Optional: one last upload attempt so queued data isn't left waiting for the next wake.
 void final_sync_before_deep_sleep() {
   if (queue_index == 0 && stored_bp_sys == 0) return;
   Serial.println("DEBUG: [PWR] Final sync before deep sleep...");
@@ -747,35 +847,29 @@ void final_sync_before_deep_sleep() {
 
 void enter_deep_sleep() {
   Serial.println("DEBUG: [PWR] -> DEEP SLEEP");
-
-  // 1. Stop sensors / measurements
   stop_HEART();
   if (bp_state == MEASURING) stop_BP();
   hr_state = IDLE; temp_state = IDLE; bp_state = IDLE;
 
-  // 2. Wi-Fi: optional final upload, then radio off
 #if DEEP_SLEEP_FINAL_SYNC
   final_sync_before_deep_sleep();
 #endif
   WiFi.disconnect(true, true);
   WiFi.mode(WIFI_OFF);
 
-  // 3. Display: backlight off, controller in sleep-in
   analogWrite(TFT_BL_PIN, 0);
   display_sleep();
 
-  // 4. Keep display lines in a safe state while the MCU is asleep
   digitalWrite(TFT_CS_PIN, HIGH);
   pinMode(TFT_RST_PIN, OUTPUT);
   digitalWrite(TFT_RST_PIN, HIGH);
-  gpio_hold_en((gpio_num_t)TFT_BL_PIN);   // backlight stays LOW
+  gpio_hold_en((gpio_num_t)TFT_BL_PIN);   
   gpio_hold_en((gpio_num_t)TFT_CS_PIN);
   gpio_hold_en((gpio_num_t)TFT_RST_PIN);
   gpio_deep_sleep_hold_en();
 
-  // 5. Wake source: button on GPIO 1 (active LOW, RTC GPIO on ESP32-S3)
   unsigned long t = millis();
-  while (digitalRead(BUTTON_PIN) == LOW && millis() - t < 3000) delay(10);  // wait for release
+  while (digitalRead(BUTTON_PIN) == LOW && millis() - t < 3000) delay(10);  
   esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
   esp_sleep_enable_ext0_wakeup((gpio_num_t)BUTTON_PIN, 0);
   rtc_gpio_pullup_en((gpio_num_t)BUTTON_PIN);
@@ -785,7 +879,6 @@ void enter_deep_sleep() {
   esp_deep_sleep_start();
 }
 
-// Light sleep until the button is pressed or `ms` elapsed. millis() keeps counting.
 void light_sleep_ms(uint32_t ms) {
   esp_sleep_enable_timer_wakeup((uint64_t)ms * 1000ULL);
   gpio_wakeup_enable((gpio_num_t)BUTTON_PIN, GPIO_INTR_LOW_LEVEL);
@@ -802,40 +895,42 @@ static uint32_t remaining_ms(unsigned long start, unsigned long period) {
   return (el >= period) ? 0 : (uint32_t)(period - el);
 }
 
-// Called once per loop() while in IDLE, after all background work has run.
 void idle_power_step() {
   wifi_force_off_for_idle();
 
-  // Don't sleep during work in progress or while a button press is being debounced
   if (sleep_inhibited() || button_state == LOW || digitalRead(BUTTON_PIN) != button_state) {
     delay(5);
     return;
   }
 
-#if DEEP_SLEEP_ENABLED
-  if (millis() - idle_start_time >= DEEP_SLEEP_TIMEOUT_MS) {
-    enter_deep_sleep();
-    return;
-  }
-  uint32_t next = remaining_ms(idle_start_time, DEEP_SLEEP_TIMEOUT_MS);
-#else
   uint32_t next = 0xFFFFFFFFUL;
+#if DEEP_SLEEP_ENABLED
+  // Continuous Measuring keeps the watch in light sleep so the 5 min measurements
+  // and the hourly sync keep running; otherwise deep sleep after DEEP_SLEEP_TIMEOUT_MS.
+  if (!continuous_measuring) {
+    if (millis() - idle_start_time >= DEEP_SLEEP_TIMEOUT_MS) {
+      enter_deep_sleep();
+      return;
+    }
+    next = remaining_ms(idle_start_time, DEEP_SLEEP_TIMEOUT_MS);
+  }
 #endif
 
-  uint32_t m = remaining_ms(last_auto_measure, AUTO_MEASURE_INTERVAL_MINUTES * 60000UL);
-  uint32_t s = remaining_ms(last_auto_sync,    AUTO_SYNC_INTERVAL_MINUTES * 60000UL);
-  if (m < next) next = m;
+  uint32_t s = remaining_ms(last_auto_sync, AUTO_SYNC_INTERVAL_MINUTES * 60000UL);
   if (s < next) next = s;
+  if (continuous_measuring) {
+    uint32_t m = remaining_ms(last_auto_measure, AUTO_MEASURE_INTERVAL_MINUTES * 60000UL);
+    if (m < next) next = m;
+  }
 
   if (next < 20) { delay(5); return; }
-  light_sleep_ms(next + 5);   // +5 ms so the task is really due when we wake
+  light_sleep_ms(next + 5);   
 }
 
 // ============================================================
 // MAIN SETUP
 // ============================================================
 void setup() {
-  // Release pin holds left from deep sleep
   gpio_deep_sleep_hold_dis();
   gpio_hold_dis((gpio_num_t)TFT_BL_PIN);
   gpio_hold_dis((gpio_num_t)TFT_CS_PIN);
@@ -846,16 +941,14 @@ void setup() {
 
   esp_sleep_wakeup_cause_t wake_cause = esp_sleep_get_wakeup_cause();
   if (wake_cause != ESP_SLEEP_WAKEUP_UNDEFINED) {
-    rtc_gpio_deinit((gpio_num_t)BUTTON_PIN);   // give GPIO 1 back to the digital domain
+    rtc_gpio_deinit((gpio_num_t)BUTTON_PIN);   
     Serial.println("DEBUG: [PWR] Woke from deep sleep (button)");
   }
   
   pinMode(BUTTON_PIN, INPUT_PULLUP);
-  // Start from the real button level so the press that woke us isn't seen as a new press
   last_button_val = digitalRead(BUTTON_PIN);
   button_state = last_button_val;
 
-  // Keep the backlight off until the first frame is drawn (no flash on boot/wake)
   pinMode(TFT_BL_PIN, OUTPUT);
   digitalWrite(TFT_BL_PIN, LOW);
 
@@ -869,7 +962,7 @@ void setup() {
   stop_HEART(); 
 
   tft.begin();
-  tft.setRotation(0); 
+  tft.setRotation(3); 
   touch.begin();
   
   lv_init();
@@ -894,7 +987,6 @@ void setup() {
   ui_init();
   current_screen = ui_Screen1;
 
-  // Enforce Clean Defaults on Boot
   lv_label_set_text(ui_heartRateLive, "--");
   lv_label_set_text(ui_sysLive, "--");
   lv_label_set_text(ui_diaLive, "--");
@@ -905,7 +997,6 @@ void setup() {
   lv_label_set_text(ui_lastSpO2Value, "--");
   lv_arc_set_value(ui_spO2Arc, 0);
 
-  // Bind UI Callbacks
   lv_obj_add_event_cb(ui_buttonHeart, start_hr_measurement, LV_EVENT_CLICKED, NULL);
   lv_obj_add_event_cb(ui_buttonSpO2, start_hr_measurement, LV_EVENT_CLICKED, NULL);
   lv_obj_add_event_cb(ui_buttonTemp, start_temp_measurement, LV_EVENT_CLICKED, NULL);
@@ -918,16 +1009,21 @@ void setup() {
   lv_obj_add_event_cb(ui_Screen8, screen8_unloaded_cb, LV_EVENT_SCREEN_UNLOAD_START, NULL);
   lv_obj_add_event_cb(ui_confirmButton, ota_confirm_event_cb, LV_EVENT_RELEASED, NULL);
 
-  update_battery();
-  update_clock_ui();            // shows restored values (HR/temp/etc.) after deep sleep
+  // Screen 9 (generated by SquareLine): Continuous Measuring switch + Measure All button
+  if (ui_contiMeasSwitch)   lv_obj_add_event_cb(ui_contiMeasSwitch, continuous_toggle_event, LV_EVENT_VALUE_CHANGED, NULL);
+  if (ui_measureAllButton)  lv_obj_add_event_cb(ui_measureAllButton, start_measure_all_event, LV_EVENT_CLICKED, NULL);
 
-  // Draw the first frame, then switch the backlight on
+  update_battery();
+  update_clock_ui();            
+
   last_lv_tick = millis();
   delay(40);
   lvgl_service();
   delay(40);
   lvgl_service();
-  analogWrite(TFT_BL_PIN, DEFAULT_BRIGHTNESS); 
+  
+  // Power on display with decoupled variable
+  analogWrite(TFT_BL_PIN, map(current_brightness, 0, 100, 0, 255)); 
 
   last_activity_time = millis();
   last_auto_measure = millis();
@@ -938,9 +1034,8 @@ void setup() {
 // MAIN LOOP
 // ============================================================
 void loop() {
-  if (power_state == PWR_ACTIVE) lvgl_service();   // no UI work while the screen is off
+  if (power_state == PWR_ACTIVE) lvgl_service();   
 
-  // --- HARDWARE BUTTON LOGIC ---
   int reading = digitalRead(BUTTON_PIN); 
   if (reading != last_button_val) last_debounce = millis();
   
@@ -948,7 +1043,7 @@ void loop() {
     if (reading != button_state) {
       button_state = reading;
       if (button_state == LOW) { 
-        last_activity_time = millis(); // Reset timer on button press
+        last_activity_time = millis(); 
         if (power_state == PWR_ACTIVE) enter_idle();
         else wake_to_active();
       }
@@ -956,13 +1051,11 @@ void loop() {
   }
   last_button_val = reading;
 
-  // --- ACTIVE -> IDLE AFTER INACTIVITY ---
   if (power_state == PWR_ACTIVE && !sleep_inhibited() &&
       (millis() - last_activity_time > IDLE_TIMEOUT_MS)) {
     enter_idle();
   }
 
-  // --- WI-FI CONNECTION TIMEOUT TOAST ---
   if (is_wifi_on && wifi_connecting) {
     if (WiFi.status() == WL_CONNECTED) {
       show_toast("Wi-Fi Connected!");
@@ -973,7 +1066,6 @@ void loop() {
     }
   }
 
-  // --- NON-BLOCKING SYNC & CLOUD UPLOAD LOGIC ---
   if (sync_state == SYNC_START) {
     Serial.println("DEBUG: [SYNC] Activating Wi-Fi for Sync...");
     WiFi.mode(WIFI_STA);
@@ -987,7 +1079,7 @@ void loop() {
       show_toast("Syncing Time & Data...");
       
       syncTimeRTC();
-      performHistoricalCloudSync(); // Uploads the queue (failed records are kept)
+      performHistoricalCloudSync(); 
 
       sync_state = SYNC_EXECUTE;
       sync_timer = millis();
@@ -1008,7 +1100,6 @@ void loop() {
     sync_state = SYNC_IDLE;
   }
 
-  // --- SCREEN CANCELLATION TRAP & TIMER ARMING ---
   lv_obj_t* act_scr = lv_scr_act();
   if (current_screen != act_scr) {
     if (is_hr_screen(current_screen) && !is_hr_screen(act_scr) && hr_state == MEASURING && !hr_auto) {
@@ -1053,29 +1144,18 @@ void loop() {
     left_temp_screen_time = 0;
   }
 
-  // NOTE: the old "if (!is_screen_on) return;" is gone on purpose. Sensor state
-  // machines, queueing and the 5 min / 60 min background tasks now keep running
-  // while the screen is off (they used to freeze).
-
-  // ============================================================
-  // SENSOR STATE MACHINES
-  // ============================================================
-  
-  // --- HEART RATE ---
   if (hr_state == MEASURING) {
-    heart_update();                       // reads the FIFO and detects beats (heart_rate.h)
+    heart_update();                       
     unsigned long now = millis();
 
     if (heart_finger_present()) hr_last_finger_ms = now;
 
-    // Live value (median of the beats so far)
     int live = heart_live_bpm();
     if (live > 0 && live != hr_live_shown) {
       lv_label_set_text_fmt(ui_heartRateLive, "%d", live);
       hr_live_shown = live;
     }
 
-    // Live SpO2 (median of the beats so far)
     int spo2_now = spo2_live();
     if (spo2_now > 0 && spo2_now != spo2_live_shown) {
       lv_label_set_text_fmt(ui_SpO2Live, SPO2_LABEL_FMT, spo2_now);
@@ -1090,10 +1170,10 @@ void loop() {
       finish_hr_measurement(true, true, NULL);
     }
     else if (hr_ok && !sp_ok && (now - hr_done_ms > SPO2_GRACE_MS)) {
-      finish_hr_measurement(true, false, NULL);    // HR is good, SpO2 never settled: keep HR
+      finish_hr_measurement(true, false, NULL);    
     }
     else if (hr_auto && (now - hr_last_finger_ms > HR_AUTO_NOFINGER_MS)) {
-      finish_hr_measurement(hr_ok, sp_ok, NULL);   // not worn: don't waste LED power
+      finish_hr_measurement(hr_ok, sp_ok, NULL);   
     }
     else if (now - hr_meas_start > (hr_auto ? HR_AUTO_TIMEOUT_MS : HR_MANUAL_TIMEOUT_MS)) {
       finish_hr_measurement(hr_ok, sp_ok, "HR Timeout");
@@ -1104,14 +1184,12 @@ void loop() {
     }
   }
 
-  // --- TEMPERATURE & HUMIDITY ---
   if (temp_state == MEASURING) {
     if (millis() - last_temp_poll > 2000) {
       AHT10_Data clim = readAHT10();
       
       Serial.printf("DEBUG: [TEMP POLL] %.2f C, %.2f %%\n", clim.temperature, clim.humidity);
       
-      // EXCLUDE FAKE 0.0/0.0 READINGS FROM DEAD SENSORS
       bool is_fake_zero = (clim.temperature == 0.0 && clim.humidity == 0.0);
 
       if (clim.temperature > -10.0 && clim.temperature < 80.0 && !is_fake_zero) { 
@@ -1130,14 +1208,14 @@ void loop() {
           stored_temp = clim.temperature;
           stored_hum = (int)clim.humidity;
           queue_record(0, stored_temp, stored_hum, 0);
+          if (ma_stage == MA_TEMP) ma_temp_ok = true;
           temp_state = IDLE;
           set_button_state(ui_buttonTemp, ui_StartMeasure5, false, 0xB25100, 0);
           
           Serial.println("DEBUG: [TEMP] Measurement COMPLETE!");
-          show_toast("Temp Updated!"); // Show user it succeeded
+          show_toast("Temp Updated!"); 
         }
       } else {
-        // If it's 0.0, reset the stability counter so it doesn't fake a completion
         temp_stable_count = 0; 
       }
       last_temp_poll = millis();
@@ -1150,14 +1228,12 @@ void loop() {
       lv_label_set_text(ui_humLive, "--");
       Serial.println("DEBUG: [TEMP] TIMEOUT - Sensor failed to return valid data.");
       
-      // Wait slightly so it doesn't get immediately overwritten by the HR timeout
       if (hr_state != MEASURING) {
          show_toast("Temp Timeout");
       }
     }
   }
 
-  // --- BLOOD PRESSURE ---
   if (bp_state == MEASURING) {
     BP_Data bp = readBP();
     
@@ -1185,7 +1261,8 @@ void loop() {
       show_toast("BP Error/Finished");
     }
 
-    if (millis() - bp_last_activity > 10000) { 
+    // (guarded so a result handled just above is never overwritten by a timeout)
+    if (bp_state == MEASURING && millis() - bp_last_activity > 10000) { 
       stop_BP();
       bp_state = SENSOR_ERROR;
       set_button_state(ui_buttonBP, ui_StartMeasure4, false, 0x007E79, 0);
@@ -1194,11 +1271,46 @@ void loop() {
       lv_label_set_text(ui_heartRateLiveBP, "-- BPM");
       show_toast("BP Disconnected");
     }
+
+    // Absolute session limit: no 'v' / complete / error within BP_TIMEOUT_MS
+    if (bp_state == MEASURING && millis() - bp_meas_start > BP_TIMEOUT_MS) {
+      stop_BP();                       // BP motor / UART off
+      bp_state = SENSOR_ERROR;
+      set_button_state(ui_buttonBP, ui_StartMeasure4, false, 0x007E79, 0);
+      lv_label_set_text(ui_sysLive, "--");
+      lv_label_set_text(ui_diaLive, "--");
+      lv_label_set_text(ui_heartRateLiveBP, "-- BPM");
+      show_toast("BP Timeout");
+      Serial.println("DEBUG: [BP] TIMEOUT - session terminated");
+    }
   }
 
-  // ============================================================
-  // OTA UPGRADE PROCESSOR
-  // ============================================================
+  // --- MEASURE ALL SEQUENCER (HR/SpO2 -> temp/humidity) ---
+  if (ma_stage != MA_IDLE) {
+    unsigned long now_ma = millis();
+    switch (ma_stage) {
+      case MA_HR:
+        if (hr_state != MEASURING) { ma_stage = MA_GAP; ma_stage_ms = now_ma; }   // HR step finished
+        break;
+      case MA_GAP:
+        if (now_ma - ma_stage_ms >= MEASURE_ALL_GAP_MS) {
+          begin_temp_measurement();
+          show_toast("Measuring Temp/Humidity...");
+          ma_stage = MA_TEMP;
+          ma_stage_ms = now_ma;
+        }
+        break;
+      case MA_TEMP:
+        if (temp_state != MEASURING) { ma_stage = MA_DONE_WAIT; ma_stage_ms = now_ma; }
+        break;
+      case MA_DONE_WAIT:
+        if (now_ma - ma_stage_ms >= MEASURE_ALL_GAP_MS) finish_measure_all();
+        break;
+      default:
+        break;
+    }
+  }
+
   if (trigger_ota_process) {
     trigger_ota_process = false;
     
@@ -1229,29 +1341,22 @@ void loop() {
         lv_timer_create([](lv_timer_t* t){ _ui_opacity_set(ui_Popup2, 0); lv_timer_del(t); }, 3000, NULL);
       }
     }
-    last_activity_time = millis();   // OTA counts as activity
+    last_activity_time = millis();   
   }
 
-  // ============================================================
-  // PERIODIC TASKS
-  // ============================================================
   if (power_state == PWR_ACTIVE && millis() - last_1sec_timer >= 1000) {
     update_clock_ui();
     update_status_icons();
     last_1sec_timer = millis();
   }
 
-  // Battery: every 5 s with the screen on, every 60 s while idle
   unsigned long batt_period = (power_state == PWR_ACTIVE) ? 5000UL : 60000UL;
   if (millis() - last_battery_timer >= batt_period) {
     update_battery();
     last_battery_timer = millis();
   }
 
-  // ============================================================
-  // BACKGROUND AUTOMATION (MEASURE & SYNC) - runs in ACTIVE and IDLE
-  // ============================================================
-  if (millis() - last_auto_measure >= (AUTO_MEASURE_INTERVAL_MINUTES * 60000UL)) {
+  if (continuous_measuring && millis() - last_auto_measure >= (AUTO_MEASURE_INTERVAL_MINUTES * 60000UL)) {
     last_auto_measure = millis(); 
 
     if (hr_state == IDLE) {
@@ -1276,11 +1381,8 @@ void loop() {
     }
   }
 
-  // ============================================================
-  // SLEEP
-  // ============================================================
   if (power_state == PWR_IDLE) {
-    idle_power_step();   // light sleep, or deep sleep after DEEP_SLEEP_TIMEOUT_MS
+    idle_power_step();   
   } else {
     delay(5);
   }

@@ -23,8 +23,11 @@ lv_obj_t * ui_batteryIcon = NULL;
 lv_obj_t * ui_batteryPercentage = NULL;
 lv_obj_t * ui_heartRateIndicator = NULL;
 lv_obj_t * ui_BPMonitorIndicator = NULL;
-lv_obj_t * ui_wifiIndicator = NULL;
+lv_obj_t * ui_humidity_new_icon = NULL;
+lv_obj_t * ui_temp_new_icon = NULL;
 lv_obj_t * ui_tempAndHumidityIndicator = NULL;
+lv_obj_t * ui_wifiIndicator = NULL;
+lv_obj_t * ui_spo2_icon_new = NULL;
 // event funtions
 void ui_event_Screen1(lv_event_t * e)
 {
@@ -37,6 +40,10 @@ void ui_event_Screen1(lv_event_t * e)
     if(event_code == LV_EVENT_GESTURE &&  lv_indev_get_gesture_dir(lv_indev_get_act()) == LV_DIR_BOTTOM) {
         lv_indev_wait_release(lv_indev_get_act());
         _ui_screen_change(&ui_Screen6, LV_SCR_LOAD_ANIM_NONE, 20, 0, &ui_Screen6_screen_init);
+    }
+    if(event_code == LV_EVENT_GESTURE &&  lv_indev_get_gesture_dir(lv_indev_get_act()) == LV_DIR_LEFT) {
+        lv_indev_wait_release(lv_indev_get_act());
+        _ui_screen_change(&ui_Screen9, LV_SCR_LOAD_ANIM_NONE, 20, 0, &ui_Screen9_screen_init);
     }
 }
 
@@ -231,37 +238,64 @@ void ui_Screen1_screen_init(void)
     lv_img_set_zoom(ui_heartRateIndicator, 13);
 
     ui_BPMonitorIndicator = lv_img_create(ui_Screen1);
-    lv_img_set_src(ui_BPMonitorIndicator, &ui_img_208041617);
-    lv_obj_set_width(ui_BPMonitorIndicator, LV_SIZE_CONTENT);   /// 256
-    lv_obj_set_height(ui_BPMonitorIndicator, LV_SIZE_CONTENT);    /// 256
+    lv_img_set_src(ui_BPMonitorIndicator, &ui_img_bp_icon_png);
+    lv_obj_set_width(ui_BPMonitorIndicator, LV_SIZE_CONTENT);   /// 240
+    lv_obj_set_height(ui_BPMonitorIndicator, LV_SIZE_CONTENT);    /// 240
     lv_obj_set_x(ui_BPMonitorIndicator, 84);
     lv_obj_set_y(ui_BPMonitorIndicator, 63);
     lv_obj_set_align(ui_BPMonitorIndicator, LV_ALIGN_CENTER);
     lv_obj_add_flag(ui_BPMonitorIndicator, LV_OBJ_FLAG_ADV_HITTEST);     /// Flags
     lv_obj_clear_flag(ui_BPMonitorIndicator, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
-    lv_img_set_zoom(ui_BPMonitorIndicator, 13);
 
-    ui_wifiIndicator = lv_img_create(ui_Screen1);
-    lv_img_set_src(ui_wifiIndicator, &ui_img_208041617);
-    lv_obj_set_width(ui_wifiIndicator, LV_SIZE_CONTENT);   /// 256
-    lv_obj_set_height(ui_wifiIndicator, LV_SIZE_CONTENT);    /// 256
-    lv_obj_set_x(ui_wifiIndicator, 66);
-    lv_obj_set_y(ui_wifiIndicator, 81);
-    lv_obj_set_align(ui_wifiIndicator, LV_ALIGN_CENTER);
-    lv_obj_add_flag(ui_wifiIndicator, LV_OBJ_FLAG_ADV_HITTEST);     /// Flags
-    lv_obj_clear_flag(ui_wifiIndicator, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
-    lv_img_set_zoom(ui_wifiIndicator, 13);
+    ui_humidity_new_icon = lv_img_create(ui_Screen1);
+    lv_img_set_src(ui_humidity_new_icon, &ui_img_humidity_icon_png);
+    lv_obj_set_width(ui_humidity_new_icon, LV_SIZE_CONTENT);   /// 240
+    lv_obj_set_height(ui_humidity_new_icon, LV_SIZE_CONTENT);    /// 240
+    lv_obj_set_x(ui_humidity_new_icon, 40);
+    lv_obj_set_y(ui_humidity_new_icon, 35);
+    lv_obj_set_align(ui_humidity_new_icon, LV_ALIGN_CENTER);
+    lv_obj_add_flag(ui_humidity_new_icon, LV_OBJ_FLAG_ADV_HITTEST);     /// Flags
+    lv_obj_clear_flag(ui_humidity_new_icon, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
+
+    ui_temp_new_icon = lv_img_create(ui_Screen1);
+    lv_img_set_src(ui_temp_new_icon, &ui_img_temp_icon_png);
+    lv_obj_set_width(ui_temp_new_icon, LV_SIZE_CONTENT);   /// 240
+    lv_obj_set_height(ui_temp_new_icon, LV_SIZE_CONTENT);    /// 240
+    lv_obj_set_x(ui_temp_new_icon, 0);
+    lv_obj_set_y(ui_temp_new_icon, 35);
+    lv_obj_set_align(ui_temp_new_icon, LV_ALIGN_CENTER);
+    lv_obj_add_flag(ui_temp_new_icon, LV_OBJ_FLAG_ADV_HITTEST);     /// Flags
+    lv_obj_clear_flag(ui_temp_new_icon, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
 
     ui_tempAndHumidityIndicator = lv_img_create(ui_Screen1);
-    lv_img_set_src(ui_tempAndHumidityIndicator, &ui_img_208041617);
-    lv_obj_set_width(ui_tempAndHumidityIndicator, LV_SIZE_CONTENT);   /// 256
-    lv_obj_set_height(ui_tempAndHumidityIndicator, LV_SIZE_CONTENT);    /// 256
+    lv_img_set_src(ui_tempAndHumidityIndicator, &ui_img_temp_humidity_icon_png);
+    lv_obj_set_width(ui_tempAndHumidityIndicator, LV_SIZE_CONTENT);   /// 240
+    lv_obj_set_height(ui_tempAndHumidityIndicator, LV_SIZE_CONTENT);    /// 240
     lv_obj_set_x(ui_tempAndHumidityIndicator, 99);
     lv_obj_set_y(ui_tempAndHumidityIndicator, 39);
     lv_obj_set_align(ui_tempAndHumidityIndicator, LV_ALIGN_CENTER);
     lv_obj_add_flag(ui_tempAndHumidityIndicator, LV_OBJ_FLAG_ADV_HITTEST);     /// Flags
     lv_obj_clear_flag(ui_tempAndHumidityIndicator, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
-    lv_img_set_zoom(ui_tempAndHumidityIndicator, 13);
+
+    ui_wifiIndicator = lv_img_create(ui_Screen1);
+    lv_img_set_src(ui_wifiIndicator, &ui_img_wifi_icon_png);
+    lv_obj_set_width(ui_wifiIndicator, LV_SIZE_CONTENT);   /// 240
+    lv_obj_set_height(ui_wifiIndicator, LV_SIZE_CONTENT);    /// 240
+    lv_obj_set_x(ui_wifiIndicator, 66);
+    lv_obj_set_y(ui_wifiIndicator, 81);
+    lv_obj_set_align(ui_wifiIndicator, LV_ALIGN_CENTER);
+    lv_obj_add_flag(ui_wifiIndicator, LV_OBJ_FLAG_ADV_HITTEST);     /// Flags
+    lv_obj_clear_flag(ui_wifiIndicator, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
+
+    ui_spo2_icon_new = lv_img_create(ui_Screen1);
+    lv_img_set_src(ui_spo2_icon_new, &ui_img_spo2_icon_png);
+    lv_obj_set_width(ui_spo2_icon_new, LV_SIZE_CONTENT);   /// 240
+    lv_obj_set_height(ui_spo2_icon_new, LV_SIZE_CONTENT);    /// 240
+    lv_obj_set_x(ui_spo2_icon_new, -103);
+    lv_obj_set_y(ui_spo2_icon_new, -1);
+    lv_obj_set_align(ui_spo2_icon_new, LV_ALIGN_CENTER);
+    lv_obj_add_flag(ui_spo2_icon_new, LV_OBJ_FLAG_ADV_HITTEST);     /// Flags
+    lv_obj_clear_flag(ui_spo2_icon_new, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
 
     lv_obj_add_event_cb(ui_Screen1, ui_event_Screen1, LV_EVENT_ALL, NULL);
     uic_bodyTempValue = ui_lastBodyTempValue;
@@ -291,7 +325,10 @@ void ui_Screen1_screen_destroy(void)
     ui_batteryPercentage = NULL;
     ui_heartRateIndicator = NULL;
     ui_BPMonitorIndicator = NULL;
-    ui_wifiIndicator = NULL;
+    ui_humidity_new_icon = NULL;
+    ui_temp_new_icon = NULL;
     ui_tempAndHumidityIndicator = NULL;
+    ui_wifiIndicator = NULL;
+    ui_spo2_icon_new = NULL;
 
 }

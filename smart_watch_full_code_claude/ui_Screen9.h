@@ -13,7 +13,13 @@ extern "C" {
 // SCREEN: ui_Screen9
 extern void ui_Screen9_screen_init(void);
 extern void ui_Screen9_screen_destroy(void);
+extern void ui_event_Screen9(lv_event_t * e);
 extern lv_obj_t * ui_Screen9;
+extern lv_obj_t * ui_newScreenHeading;
+extern lv_obj_t * ui_contiMeasSwitch;
+extern lv_obj_t * ui_measureAllButton;
+extern lv_obj_t * ui_measureAllText;
+extern lv_obj_t * ui_Continuous_Meas_Text;
 // CUSTOM VARIABLES
 
 #ifdef __cplusplus

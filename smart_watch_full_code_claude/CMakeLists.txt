@@ -10,6 +10,12 @@ SET(SOURCES ui_Screen1.c
     ui.c
     ui_comp_hook.c
     ui_helpers.c
-    ui_img_208041617.c)
+    ui_img_208041617.c
+    ui_img_bp_icon_png.c
+    ui_img_humidity_icon_png.c
+    ui_img_temp_icon_png.c
+    ui_img_temp_humidity_icon_png.c
+    ui_img_wifi_icon_png.c
+    ui_img_spo2_icon_png.c)
 
 add_library(ui ${SOURCES})

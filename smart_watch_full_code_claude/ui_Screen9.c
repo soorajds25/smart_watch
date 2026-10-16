@@ -6,7 +6,21 @@
 #include "ui.h"
 
 lv_obj_t * ui_Screen9 = NULL;
+lv_obj_t * ui_newScreenHeading = NULL;
+lv_obj_t * ui_contiMeasSwitch = NULL;
+lv_obj_t * ui_measureAllButton = NULL;
+lv_obj_t * ui_measureAllText = NULL;
+lv_obj_t * ui_Continuous_Meas_Text = NULL;
 // event funtions
+void ui_event_Screen9(lv_event_t * e)
+{
+    lv_event_code_t event_code = lv_event_get_code(e);
+
+    if(event_code == LV_EVENT_GESTURE &&  lv_indev_get_gesture_dir(lv_indev_get_act()) == LV_DIR_RIGHT) {
+        lv_indev_wait_release(lv_indev_get_act());
+        _ui_screen_change(&ui_Screen1, LV_SCR_LOAD_ANIM_NONE, 20, 0, &ui_Screen1_screen_init);
+    }
+}
 
 // build funtions
 
@@ -14,6 +28,61 @@ void ui_Screen9_screen_init(void)
 {
     ui_Screen9 = lv_obj_create(NULL);
     lv_obj_clear_flag(ui_Screen9, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
+
+    ui_newScreenHeading = lv_label_create(ui_Screen9);
+    lv_obj_set_width(ui_newScreenHeading, LV_SIZE_CONTENT);   /// 1
+    lv_obj_set_height(ui_newScreenHeading, LV_SIZE_CONTENT);    /// 1
+    lv_obj_set_x(ui_newScreenHeading, -1);
+    lv_obj_set_y(ui_newScreenHeading, -75);
+    lv_obj_set_align(ui_newScreenHeading, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_newScreenHeading, "NEW!");
+    lv_obj_set_style_text_color(ui_newScreenHeading, lv_color_hex(0x38F5FF), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_opa(ui_newScreenHeading, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(ui_newScreenHeading, &lv_font_montserrat_20, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    ui_contiMeasSwitch = lv_switch_create(ui_Screen9);
+    lv_obj_set_width(ui_contiMeasSwitch, 50);
+    lv_obj_set_height(ui_contiMeasSwitch, 25);
+    lv_obj_set_x(ui_contiMeasSwitch, 45);
+    lv_obj_set_y(ui_contiMeasSwitch, -20);
+    lv_obj_set_align(ui_contiMeasSwitch, LV_ALIGN_CENTER);
+
+    lv_obj_set_style_bg_color(ui_contiMeasSwitch, lv_color_hex(0xDD0D0D), LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_opa(ui_contiMeasSwitch, 255, LV_PART_INDICATOR | LV_STATE_CHECKED);
+
+    lv_obj_set_style_bg_color(ui_contiMeasSwitch, lv_color_hex(0xFFFFFF), LV_PART_KNOB | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_opa(ui_contiMeasSwitch, 255, LV_PART_KNOB | LV_STATE_DEFAULT);
+
+    ui_measureAllButton = lv_btn_create(ui_Screen9);
+    lv_obj_set_width(ui_measureAllButton, 128);
+    lv_obj_set_height(ui_measureAllButton, 50);
+    lv_obj_set_x(ui_measureAllButton, 0);
+    lv_obj_set_y(ui_measureAllButton, 45);
+    lv_obj_set_align(ui_measureAllButton, LV_ALIGN_CENTER);
+    lv_obj_add_flag(ui_measureAllButton, LV_OBJ_FLAG_SCROLL_ON_FOCUS);     /// Flags
+    lv_obj_clear_flag(ui_measureAllButton, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
+    lv_obj_set_style_bg_color(ui_measureAllButton, lv_color_hex(0x10C400), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_opa(ui_measureAllButton, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    ui_measureAllText = lv_label_create(ui_measureAllButton);
+    lv_obj_set_width(ui_measureAllText, LV_SIZE_CONTENT);   /// 1
+    lv_obj_set_height(ui_measureAllText, LV_SIZE_CONTENT);    /// 1
+    lv_obj_set_align(ui_measureAllText, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_measureAllText, "MEASURE ALL");
+    lv_obj_set_style_text_color(ui_measureAllText, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_opa(ui_measureAllText, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(ui_measureAllText, &lv_font_montserrat_14, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    ui_Continuous_Meas_Text = lv_label_create(ui_Screen9);
+    lv_obj_set_width(ui_Continuous_Meas_Text, LV_SIZE_CONTENT);   /// 1
+    lv_obj_set_height(ui_Continuous_Meas_Text, LV_SIZE_CONTENT);    /// 1
+    lv_obj_set_x(ui_Continuous_Meas_Text, -30);
+    lv_obj_set_y(ui_Continuous_Meas_Text, -20);
+    lv_obj_set_align(ui_Continuous_Meas_Text, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_Continuous_Meas_Text, "Continous\nMeasuring");
+    lv_obj_set_style_text_font(ui_Continuous_Meas_Text, &lv_font_montserrat_14, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    lv_obj_add_event_cb(ui_Screen9, ui_event_Screen9, LV_EVENT_ALL, NULL);
 
 }
 
@@ -23,5 +92,10 @@ void ui_Screen9_screen_destroy(void)
 
     // NULL screen variables
     ui_Screen9 = NULL;
+    ui_newScreenHeading = NULL;
+    ui_contiMeasSwitch = NULL;
+    ui_measureAllButton = NULL;
+    ui_measureAllText = NULL;
+    ui_Continuous_Meas_Text = NULL;
 
 }
