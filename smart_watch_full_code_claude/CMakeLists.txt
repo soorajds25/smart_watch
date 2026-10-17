@@ -7,6 +7,7 @@ SET(SOURCES ui_Screen1.c
     ui_Screen7.c
     ui_Screen8.c
     ui_Screen9.c
+    ui_Screen10.c
     ui.c
     ui_comp_hook.c
     ui_helpers.c

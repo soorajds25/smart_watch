@@ -20,6 +20,10 @@ void ui_event_Screen9(lv_event_t * e)
         lv_indev_wait_release(lv_indev_get_act());
         _ui_screen_change(&ui_Screen1, LV_SCR_LOAD_ANIM_NONE, 20, 0, &ui_Screen1_screen_init);
     }
+    if(event_code == LV_EVENT_GESTURE &&  lv_indev_get_gesture_dir(lv_indev_get_act()) == LV_DIR_LEFT) {
+        lv_indev_wait_release(lv_indev_get_act());
+        _ui_screen_change(&ui_Screen10, LV_SCR_LOAD_ANIM_NONE, 20, 0, &ui_Screen10_screen_init);
+    }
 }
 
 // build funtions

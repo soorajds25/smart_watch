@@ -6,138 +6,108 @@
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h> 
 #include <ArduinoJson.h> 
+#include <Preferences.h> 
 
-// Tell this header file that stored_bp_hr exists in the main .ino file
 extern int stored_bp_hr; 
+void show_toast(const char* msg);
 
-// ==========================================
-// CLOUD API CONFIGURATION
-// ==========================================
 const char* cloudApiUrl = "https://patient-health-monitoring-pi.vercel.app/api/entry";
+const char* DEFAULT_DEVICE_TOKEN = "pdk_8300882366a973c0d8669c4b13c9a2031ae01ed9bef98f76"; 
+String DEVICE_TOKEN = "";
 
-// NOTE: Replace this with your authentic token from the dashboard
-// const String DEVICE_TOKEN = "pdk_a9faab960e6b1f2e8df393e349ea467948aeaced1a1618e7"; //Device is Sooraj
+void initDeviceCredentials() {
+  Preferences prefs;
+  prefs.begin("dev_config", true);
+  DEVICE_TOKEN = prefs.getString("token", DEFAULT_DEVICE_TOKEN);
+  prefs.end();
+  Serial.print("DEBUG: [NVS] Loaded Device Token: ");
+  Serial.println(DEVICE_TOKEN);
+}
 
-const String DEVICE_TOKEN = "pdk_a9faab960e6b1f2e8df393e349ea467948aeaced1a1618e7";
+void saveDeviceTokenToNVS(const char* newToken) {
+  Preferences prefs;
+  prefs.begin("dev_config", false);
+  prefs.putString("token", newToken);
+  prefs.end();
+  DEVICE_TOKEN = String(newToken);
+  Serial.println("DEBUG: [NVS] Saved new token to flash NVS successfully!");
+}
 
-// Helper function to serialize and send JSON
 bool sendReadingToCloud(StaticJsonDocument<128>& jsonDoc) {
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("DEBUG: [API] Sync Failed - No Wi-Fi");
     return false;
+  }
+
+  if (DEVICE_TOKEN.length() == 0) {
+    initDeviceCredentials();
   }
 
   WiFiClientSecure client;
   client.setInsecure(); 
-
   HTTPClient http;
-  
   http.begin(client, cloudApiUrl);
-  
   http.addHeader("Content-Type", "application/json");
   http.addHeader("Authorization", "Bearer " + DEVICE_TOKEN);
 
   String requestBody;
   serializeJson(jsonDoc, requestBody);
-  
-  Serial.println("DEBUG: [API] Sending: " + requestBody);
   int httpCode = http.POST(requestBody);
   
   bool success = false;
-  if (httpCode == 201) {
-    Serial.println("DEBUG: [API] Cloud Sync SUCCESS (201 Created)");
-    success = true;
-  } else if (httpCode == 422) {
-    Serial.println("DEBUG: [API] FAILED (422) -> Type Mismatch. Check API Docs.");
-  } else {
-    Serial.printf("DEBUG: [API] FAILED. HTTP Code: %d\n", httpCode);
-  }
+  if (httpCode > 0) {
+    String responseStr = http.getString();
+    
+    if (responseStr.indexOf("\"new_token\"") > 0) {
+      StaticJsonDocument<256> respDoc;
+      if (!deserializeJson(respDoc, responseStr) && respDoc.containsKey("new_token")) {
+        saveDeviceTokenToNVS(respDoc["new_token"]);
+        show_toast("User Assigned!"); 
+      }
+    }
+
+    if (httpCode == 200 || httpCode == 201) {
+      success = true;
+    }
+  } 
   
   http.end();
   return success;
 }
 
-// Master function triggered by the "Sync Now" button
 bool performCloudSync(int hr, float temp, int hum, int bp_sys, int bp_dia, int spo2) {
-  Serial.println("\nDEBUG: [API] --- EVALUATING DATA FOR CLOUD SYNC ---");
   bool overallSuccess = true;
-  bool dataSent = false;
 
-  // 1. BLOOD PRESSURE
   if (bp_sys > 0 && bp_dia > 0) {
-    Serial.println("DEBUG: [API] Valid BP found. Uploading...");
-    
-    StaticJsonDocument<128> sysDoc;
-    sysDoc["bp_value"] = bp_sys;
-    sysDoc["bp_type"] = "systolic";
-    if (!sendReadingToCloud(sysDoc)) overallSuccess = false;
-    
-    StaticJsonDocument<128> diaDoc;
-    diaDoc["bp_value"] = bp_dia;
-    diaDoc["bp_type"] = "diastolic";
-    if (!sendReadingToCloud(diaDoc)) overallSuccess = false;
+    StaticJsonDocument<128> sysDoc, diaDoc;
+    sysDoc["bp_value"] = bp_sys; sysDoc["bp_type"] = "systolic";
+    diaDoc["bp_value"] = bp_dia; diaDoc["bp_type"] = "diastolic";
+    if (!sendReadingToCloud(sysDoc) || !sendReadingToCloud(diaDoc)) overallSuccess = false;
 
-    // Include BP-derived heart rate separately with source flag
     if (stored_bp_hr > 0) {
         StaticJsonDocument<128> bpHrDoc;
-        bpHrDoc["heart_rate"] = stored_bp_hr;
-        bpHrDoc["source"] = "bp_monitor"; 
+        bpHrDoc["heart_rate"] = stored_bp_hr; bpHrDoc["source"] = "bp_monitor"; 
         if (!sendReadingToCloud(bpHrDoc)) overallSuccess = false;
     }
-    
-    dataSent = true;
-  } else {
-    Serial.println("DEBUG: [API] Skipping BP -> Value is 0");
   }
 
-  // 2. HEART RATE (MAX30102)
   if (hr > 0) {
-    Serial.println("DEBUG: [API] Valid Heart Rate found. Uploading...");
-    StaticJsonDocument<128> hrDoc;
-    hrDoc["heart_rate"] = hr; 
+    StaticJsonDocument<128> hrDoc; hrDoc["heart_rate"] = hr; 
     if (!sendReadingToCloud(hrDoc)) overallSuccess = false;
-    dataSent = true;
-  } else {
-    Serial.println("DEBUG: [API] Skipping Heart Rate -> Value is 0");
   }
 
-  // 3. TEMPERATURE 
   if (temp > 0.0) {
-    Serial.println("DEBUG: [API] Valid Temperature found. Uploading...");
-    StaticJsonDocument<128> tempDoc;
-    tempDoc["temp"] = temp; 
+    StaticJsonDocument<128> tempDoc; tempDoc["temp"] = temp; 
     if (!sendReadingToCloud(tempDoc)) overallSuccess = false;
-    dataSent = true;
-  } else {
-    Serial.println("DEBUG: [API] Skipping Temperature -> Value is 0");
   }
 
-  // 4. HUMIDITY
   if (hum > 0) {
-    Serial.println("DEBUG: [API] Valid Humidity found. Uploading...");
-    StaticJsonDocument<128> humDoc;
-    humDoc["humidity"] = hum; 
+    StaticJsonDocument<128> humDoc; humDoc["humidity"] = hum; 
     if (!sendReadingToCloud(humDoc)) overallSuccess = false;
-    dataSent = true;
-  } else {
-    Serial.println("DEBUG: [API] Skipping Humidity -> Value is 0");
   }
 
-  // 5. SpO2
   if (spo2 > 0) {
-    Serial.println("DEBUG: [API] Valid SpO2 found. Uploading...");
-    StaticJsonDocument<128> spo2Doc;
-    spo2Doc["spo2"] = spo2; 
+    StaticJsonDocument<128> spo2Doc; spo2Doc["spo2"] = spo2; 
     if (!sendReadingToCloud(spo2Doc)) overallSuccess = false;
-    dataSent = true;
-  } else {
-    Serial.println("DEBUG: [API] Skipping SpO2 -> Value is 0");
-  }
-
-  if (!dataSent) {
-    Serial.println("DEBUG: [API] Sync Aborted -> No valid data to upload.");
-  } else {
-    Serial.println("DEBUG: [API] --- CLOUD SYNC COMPLETE ---");
   }
 
   return overallSuccess;
