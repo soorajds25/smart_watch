@@ -66,7 +66,7 @@ int temp_stable_count = 0;
 
 unsigned long bp_last_activity = 0, bp_meas_start = 0;      
 #ifndef BP_TIMEOUT_MS
-#define BP_TIMEOUT_MS 20000           
+#define BP_TIMEOUT_MS 70000           
 #endif
 
 bool continuous_measuring = false;
@@ -331,6 +331,13 @@ void wifi_toggle(lv_event_t * e) {
     WiFi.mode(WIFI_OFF);
     wifi_connecting = false;
   }
+}
+
+// Callback to cleanly restart the watch CPU without wiping NVS
+void reboot_button_cb(lv_event_t * e) {
+  show_toast("Rebooting Watch...");
+  delay(1000); // Brief pause so the toast is visible before reset
+  ESP.restart(); 
 }
 
 // SCREEN 10 SETUP BINDINGS
@@ -617,6 +624,9 @@ void setup() {
   }
   if (ui_startButton) lv_obj_add_event_cb(ui_startButton, start_provisioning_cb, LV_EVENT_CLICKED, NULL);
   if (ui_cancelButton2) lv_obj_add_event_cb(ui_cancelButton2, cancel_provisioning_cb, LV_EVENT_CLICKED, NULL);
+  
+  // ADD THIS LINE FOR YOUR REBOOT BUTTON:
+  if (ui_reboot_button) lv_obj_add_event_cb(ui_reboot_button, reboot_button_cb, LV_EVENT_CLICKED, NULL);
 
   update_battery(); update_clock_ui();            
   last_lv_tick = millis(); delay(40); lvgl_service(); delay(40); lvgl_service();

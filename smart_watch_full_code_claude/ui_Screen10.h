@@ -27,6 +27,8 @@ extern void ui_event_cancelButton2(lv_event_t * e);
 extern lv_obj_t * ui_cancelButton2;
 extern lv_obj_t * ui_cancelText2;
 extern lv_obj_t * ui_Instructions_Heading;
+extern lv_obj_t * ui_reboot_button;
+extern lv_obj_t * ui_reboot_text;
 // CUSTOM VARIABLES
 
 #ifdef __cplusplus

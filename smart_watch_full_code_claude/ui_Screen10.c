@@ -15,6 +15,8 @@ lv_obj_t * ui_startText = NULL;
 lv_obj_t * ui_cancelButton2 = NULL;
 lv_obj_t * ui_cancelText2 = NULL;
 lv_obj_t * ui_Instructions_Heading = NULL;
+lv_obj_t * ui_reboot_button = NULL;
+lv_obj_t * ui_reboot_text = NULL;
 // event funtions
 void ui_event_Screen10(lv_event_t * e)
 {
@@ -40,6 +42,7 @@ void ui_event_connectwifibutton(lv_event_t * e)
         _ui_flag_modify(ui_startButton, LV_OBJ_FLAG_HIDDEN, _UI_MODIFY_FLAG_TOGGLE);
         _ui_flag_modify(ui_Instructions_Heading, LV_OBJ_FLAG_HIDDEN, _UI_MODIFY_FLAG_TOGGLE);
         _ui_flag_modify(ui_wifisetupheading, LV_OBJ_FLAG_HIDDEN, _UI_MODIFY_FLAG_TOGGLE);
+        _ui_flag_modify(ui_reboot_button, LV_OBJ_FLAG_HIDDEN, _UI_MODIFY_FLAG_TOGGLE);
     }
 }
 
@@ -65,6 +68,7 @@ void ui_event_cancelButton2(lv_event_t * e)
         _ui_flag_modify(ui_startButton, LV_OBJ_FLAG_HIDDEN, _UI_MODIFY_FLAG_TOGGLE);
         _ui_flag_modify(ui_wifihotspotinstructions, LV_OBJ_FLAG_HIDDEN, _UI_MODIFY_FLAG_TOGGLE);
         _ui_flag_modify(ui_wifisetupheading, LV_OBJ_FLAG_HIDDEN, _UI_MODIFY_FLAG_TOGGLE);
+        _ui_flag_modify(ui_reboot_button, LV_OBJ_FLAG_HIDDEN, _UI_MODIFY_FLAG_TOGGLE);
     }
 }
 
@@ -79,9 +83,9 @@ void ui_Screen10_screen_init(void)
     lv_obj_set_width(ui_wifisetupheading, LV_SIZE_CONTENT);   /// 1
     lv_obj_set_height(ui_wifisetupheading, LV_SIZE_CONTENT);    /// 1
     lv_obj_set_x(ui_wifisetupheading, -1);
-    lv_obj_set_y(ui_wifisetupheading, -75);
+    lv_obj_set_y(ui_wifisetupheading, -71);
     lv_obj_set_align(ui_wifisetupheading, LV_ALIGN_CENTER);
-    lv_label_set_text(ui_wifisetupheading, "WIFI SETUP");
+    lv_label_set_text(ui_wifisetupheading, "CONFIGURATION");
     lv_obj_set_style_text_color(ui_wifisetupheading, lv_color_hex(0x38F5FF), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_opa(ui_wifisetupheading, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(ui_wifisetupheading, &lv_font_montserrat_20, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -89,8 +93,6 @@ void ui_Screen10_screen_init(void)
     ui_connectwifibutton = lv_btn_create(ui_Screen10);
     lv_obj_set_width(ui_connectwifibutton, 185);
     lv_obj_set_height(ui_connectwifibutton, 50);
-    lv_obj_set_x(ui_connectwifibutton, 0);
-    lv_obj_set_y(ui_connectwifibutton, 10);
     lv_obj_set_align(ui_connectwifibutton, LV_ALIGN_CENTER);
     lv_obj_add_flag(ui_connectwifibutton, LV_OBJ_FLAG_SCROLL_ON_FOCUS);     /// Flags
     lv_obj_clear_flag(ui_connectwifibutton, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
@@ -164,6 +166,23 @@ void ui_Screen10_screen_init(void)
     lv_obj_set_style_text_opa(ui_Instructions_Heading, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(ui_Instructions_Heading, &lv_font_montserrat_20, LV_PART_MAIN | LV_STATE_DEFAULT);
 
+    ui_reboot_button = lv_btn_create(ui_Screen10);
+    lv_obj_set_width(ui_reboot_button, 100);
+    lv_obj_set_height(ui_reboot_button, 34);
+    lv_obj_set_x(ui_reboot_button, 0);
+    lv_obj_set_y(ui_reboot_button, 70);
+    lv_obj_set_align(ui_reboot_button, LV_ALIGN_CENTER);
+    lv_obj_add_flag(ui_reboot_button, LV_OBJ_FLAG_SCROLL_ON_FOCUS);     /// Flags
+    lv_obj_clear_flag(ui_reboot_button, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
+    lv_obj_set_style_bg_color(ui_reboot_button, lv_color_hex(0xFD5C5C), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_opa(ui_reboot_button, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    ui_reboot_text = lv_label_create(ui_reboot_button);
+    lv_obj_set_width(ui_reboot_text, LV_SIZE_CONTENT);   /// 1
+    lv_obj_set_height(ui_reboot_text, LV_SIZE_CONTENT);    /// 1
+    lv_obj_set_align(ui_reboot_text, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_reboot_text, "REBOOT");
+
     lv_obj_add_event_cb(ui_connectwifibutton, ui_event_connectwifibutton, LV_EVENT_ALL, NULL);
     lv_obj_add_event_cb(ui_startButton, ui_event_startButton, LV_EVENT_ALL, NULL);
     lv_obj_add_event_cb(ui_cancelButton2, ui_event_cancelButton2, LV_EVENT_ALL, NULL);
@@ -186,5 +205,7 @@ void ui_Screen10_screen_destroy(void)
     ui_cancelButton2 = NULL;
     ui_cancelText2 = NULL;
     ui_Instructions_Heading = NULL;
+    ui_reboot_button = NULL;
+    ui_reboot_text = NULL;
 
 }
