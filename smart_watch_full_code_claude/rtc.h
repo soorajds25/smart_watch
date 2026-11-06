@@ -5,21 +5,17 @@
 #include <WiFi.h>
 #include <time.h>
 #include <Wire.h>
-#include <RTClib.h>
+#include <PCF85263A.h> 
 
-// NTP server details
 const char* ntpServer = "pool.ntp.org";
-const long gmtOffset_sec = 19800;  // 5.5 hours offset for IST
-const int daylightOffset_sec = 0;  // No Daylight Savings
 
-RTC_DS1307 rtc;
+PCF85263A rtc; 
 
 char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
 
 struct tm timeinfo;
-uint32_t lastSyncUnixTime = 0;  // Storing as unix time integer
+uint32_t lastSyncUnixTime = 0;  
 
-// 1. Data Structure
 struct RTC_Data {
     uint32_t unixTime;
     int hour;
@@ -30,54 +26,73 @@ struct RTC_Data {
     int year;
 };
 
-//Initialising the sensor
 inline bool init_RTC() {
-  if (!rtc.begin(&Wire)) {
-    Serial.println("Couldn't find RTC");
-    return false;
-  }
-  Serial.println("RTC connected");
-  return true;
+    // FIX 1: Safely set 12.5pF to fix the fast drifting time.
+    // PCF85263A Oscillator Register (0x25): Bit 7 must be 1 for 12.5pF.
+    // We read the existing register first so we don't corrupt the other bits.
+    Wire.beginTransmission(0x51);
+    Wire.write(0x25);
+    if (Wire.endTransmission(false) == 0 && Wire.requestFrom(0x51, 1) == 1) {
+        uint8_t osc = Wire.read();
+        osc |= 0x80; // Safely flip Bit 7 to 1
+        Wire.beginTransmission(0x51);
+        Wire.write(0x25);
+        Wire.write(osc);
+        Wire.endTransmission();
+    }
+
+    // FIX 2: Force the ESP32 environment to Indian Standard Time.
+    // This Posix string natively prevents the 1-hour DST jump bug.
+    setenv("TZ", "IST-5:30", 1);
+    tzset();
+
+    if (rtc.oscillator_stop()) {
+        Serial.println("RTC oscillator stopped (needs NTP sync)");
+    } else {
+        Serial.println("RTC connected and running");
+    }
+    return true; 
 }
 
-// 3. Read Function
 inline RTC_Data readRTC() {
-  RTC_Data data;
+    RTC_Data data;
+    time_t current_time = rtc.time(NULL);
+    
+    struct tm dt;
+    
+    // Because we locked the TZ environment to IST above, localtime_r 
+    // will perfectly extract the time without any weird double-shifting.
+    localtime_r(&current_time, &dt);
 
-  DateTime now = rtc.now();
+    data.unixTime = (uint32_t)current_time;
+    data.hour = dt.tm_hour;
+    data.minute = dt.tm_min;
+    data.second = dt.tm_sec;
+    data.day = dt.tm_mday;
+    data.month = dt.tm_mon + 1;       
+    data.year = dt.tm_year + 1900;    
 
-  data.unixTime = now.unixtime();
-  data.hour = now.hour();
-  data.minute = now.minute();
-  data.second = now.second();
-  data.day = now.day();
-  data.month = now.month();
-  data.year = now.year();
-  return data;
+    return data;
 }
 
-
-// 4. Sync Function (Call ONLY when WiFi is connected)
 inline void syncTimeRTC() {
-  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-  if (!getLocalTime(&timeinfo)) {
-    Serial.println("Failed to obtain time");
-    return;
-  }
-  Serial.println("\nESP32 Time synchronized with NTP server.");
+    // FIX 3: Use configTzTime instead of the buggy offset math
+    configTzTime("IST-5:30", ntpServer, "time.google.com");
+    
+    if (!getLocalTime(&timeinfo)) {
+        Serial.println("Failed to obtain time");
+        return;
+    }
+    Serial.println("\nESP32 Time synchronized with NTP server.");
 
-  // Sync the RTC with the NTP time
-  rtc.adjust(DateTime(timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
-                      timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec));
+    // Write the clean, un-shifted time directly to the RTC hardware
+    rtc.set(&timeinfo);
 
-  // Record the exact time we synced
-  DateTime updatedTime = rtc.now();
-  lastSyncUnixTime = updatedTime.unixtime();
+    time_t updatedTime = rtc.time(NULL);
+    lastSyncUnixTime = (uint32_t)updatedTime;
 }
 
 #endif
-
-
 
 
 

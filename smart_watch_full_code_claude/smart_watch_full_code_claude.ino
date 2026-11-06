@@ -202,7 +202,8 @@ void set_button_state(lv_obj_t* btn_obj, lv_obj_t* label_obj, bool is_measuring,
     lv_label_set_text(label_obj, "Measuring...");
     lv_obj_set_style_bg_color(btn_obj, lv_color_hex(active_color), 0);
   } else {
-    lv_label_set_text(label_obj, "Start\nMeasuring");
+    // FIX: Removed the \n to prevent LVGL from vertically clipping the text
+    lv_label_set_text(label_obj, "Start Measure"); 
     lv_obj_set_style_bg_color(btn_obj, lv_color_hex(idle_color), 0);
   }
 }
@@ -602,6 +603,17 @@ void setup() {
   ui_init();
   current_screen = ui_Screen1;
   lv_label_set_text(ui_heartRateLive, "--"); lv_label_set_text(ui_sysLive, "--"); lv_label_set_text(ui_diaLive, "--"); lv_label_set_text(ui_heartRateLiveBP, "-- BPM"); lv_label_set_text(ui_tempLive, "--"); lv_label_set_text(ui_humLive, "--"); lv_label_set_text(ui_SpO2Live, "--"); lv_label_set_text(ui_lastSpO2Value, "--"); lv_arc_set_value(ui_spO2Arc, 0);
+
+  // Clear SquareLine dummy values if no real data has been measured yet
+  if (stored_hr == 0) {
+      lv_label_set_text(ui_lastHeartRate, "--");
+      lv_arc_set_value(ui_heartRateArc, 0);
+  }
+  if (stored_temp == 0.0) {
+      lv_label_set_text(ui_lastBodyTempValue, "--");
+      lv_label_set_text(ui_lastHumidityValue, "--");
+      lv_label_set_text(ui_weatherValue, "");
+  }
 
   lv_obj_add_event_cb(ui_buttonHeart, start_hr_measurement, LV_EVENT_CLICKED, NULL);
   lv_obj_add_event_cb(ui_buttonSpO2, start_hr_measurement, LV_EVENT_CLICKED, NULL);
